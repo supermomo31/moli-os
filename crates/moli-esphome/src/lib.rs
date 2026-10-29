@@ -64,6 +64,10 @@ pub struct Config {
     /// the voice it plays.
     #[serde(default)]
     pub media_base: Option<String>,
+    /// A Google Cast speaker (`host` or `host:port`) that says Moli's answers
+    /// and announcements when this satellite has no speaker of its own.
+    #[serde(default)]
+    pub cast_speaker: Option<String>,
     /// Seconds a conversation stays open after each answer.
     #[serde(default = "default_window")]
     pub window_s: u64,
@@ -568,6 +572,7 @@ async fn session(
     let (mut voice, mut thoughts) = satellite::Voice::new(
         Duration::from_secs(config.window_s),
         config.media_base.clone(),
+        config.cast_speaker.clone(),
     );
 
     let mut ping = tokio::time::interval(PING_EVERY);
@@ -600,7 +605,15 @@ async fn session(
                     let _ = tx.send(api::DISCONNECT_REQUEST, &[]).await;
                     return Ok(());
                 };
-                let result = order(ctx, &mut tx, &entities, config.media_base.as_deref(), &command).await;
+                let result = order(
+                    ctx,
+                    &mut tx,
+                    &entities,
+                    config.media_base.as_deref(),
+                    config.cast_speaker.as_deref(),
+                    &command,
+                )
+                .await;
                 command.reply(result);
             }
         }
@@ -730,16 +743,51 @@ async fn until(at: Option<Instant>) {
 
 /// What a satellite may say at once.
 const MAX_SAY: usize = 500;
+const CAST_PIN: &str = "cast_pin";
+
+pub(crate) fn cast_target(speaker: &str) -> (&str, u16) {
+    let speaker = speaker.trim();
+    speaker
+        .rsplit_once(':')
+        .and_then(|(h, p)| p.parse::<u16>().ok().map(|p| (h, p)))
+        .unwrap_or((speaker, moli_androidtv::cast::PORT))
+}
 
 /// A command for the device: the volume or mute of its media player, or a
-/// sentence in Moli's voice (an announcement over what it plays).
+/// sentence in Moli's voice (an announcement over what it plays, or on its
+/// paired Cast speaker).
 async fn order(
     ctx: &DriverCtx,
     tx: &mut Outbox,
     entities: &Entities,
     media_base: Option<&str>,
+    cast_speaker: Option<&str>,
     command: &CommandRequest,
 ) -> Result<(), String> {
+    if let ("say", Value::Text(text), Some(speaker)) = (&*command.key, &command.value, cast_speaker)
+    {
+        let text = text.trim();
+        if text.is_empty() || text.chars().count() > MAX_SAY {
+            return Err(moli_i18n::tr!("pilotes.esphome.phrase"));
+        }
+        let url = ctx
+            .voice_brain()
+            .zip(media_base)
+            .and_then(|(brain, base)| brain.announcement_url(base, text))
+            .ok_or_else(|| moli_i18n::tr!("pilotes.esphome.sans_voix"))?;
+        let (host, port) = cast_target(speaker);
+        let pinned = ctx.secret(CAST_PIN);
+        let tls = moli_net::PinnedTls::new(pinned.clone()).map_err(|e| format!("{e:#}"))?;
+        moli_androidtv::cast::speak(&tls, host, port, &url, "audio/flac")
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        if pinned.is_none()
+            && let Some(seen) = tls.pinned_fingerprint()
+        {
+            let _ = ctx.store_secret(CAST_PIN, &seen).await;
+        }
+        return Ok(());
+    }
     let key = entities
         .media_player
         .ok_or_else(|| moli_i18n::tr!("pilotes.esphome.sans_lecteur"))?;
@@ -894,6 +942,7 @@ mod tests {
             host: "127.0.0.1".into(),
             port,
             media_base: None,
+            cast_speaker: None,
             window_s: default_window(),
             wake_words: Vec::new(),
             mac: Some("AA:BB:CC:DD:EE:FF".into()),
@@ -962,5 +1011,11 @@ mod tests {
             words_to_set(&wanted, &["hey_moli"], &owned(&[])),
             Some(vec!["hey_moli"])
         );
+    }
+
+    #[test]
+    fn cast_speaker_host_and_optional_port() {
+        assert_eq!(cast_target("192.168.1.50"), ("192.168.1.50", 8009));
+        assert_eq!(cast_target(" 192.168.1.50:32041 "), ("192.168.1.50", 32041));
     }
 }

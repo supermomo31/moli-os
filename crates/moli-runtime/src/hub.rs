@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 use moli_core::{
     Action, ApprovalRequest, Decision, Device, DeviceId, DriverStatus, Event, InstanceId,
-    JournalEntry, Label, Origin, Outcome, PointId, Sample, Value, ValueError, now_ms, validate,
+    JournalEntry, Label, Origin, Outcome, PointId, Policy, Sample, Value, ValueError, now_ms,
+    validate,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -19,7 +20,7 @@ use crate::guard::{GuardPolicy, GuardStatus, Verdict};
 use crate::journal_log::JournalLog;
 use crate::secrets::{self, MasterKey, SecretStore};
 use crate::state_cache::{self, States};
-use crate::{Stats, labels};
+use crate::{Stats, labels, permissions};
 
 const COMMAND_QUEUE: usize = 64;
 /// Secret namespace of the hub itself; reserved as a driver id.
@@ -31,6 +32,9 @@ pub struct HubOptions {
     pub labels_path: Option<PathBuf>,
     /// Where last known values are cached across restarts. `None` disables it.
     pub state_path: Option<PathBuf>,
+    /// Where standing permissions (« always », « never » per point) are
+    /// persisted. `None` keeps them in memory only.
+    pub permissions_path: Option<PathBuf>,
     /// Append-only journal file (JSON Lines). `None` keeps it in memory only.
     pub journal_path: Option<PathBuf>,
     /// Where drivers last reached their devices. `None` keeps it in memory only.
@@ -51,6 +55,7 @@ impl Default for HubOptions {
         Self {
             labels_path: None,
             state_path: None,
+            permissions_path: None,
             journal_path: None,
             addresses_path: None,
             journal_capacity: 500,
@@ -81,6 +86,10 @@ pub enum CommandError {
     /// Held by the guard: a human must approve request `id`.
     #[error("awaiting human approval #{id}: {reason}")]
     NeedsApproval { id: u64, reason: String },
+    /// A standing permission (« never ») refuses the order: nobody is asked,
+    /// it is simply not carried out.
+    #[error("{0}")]
+    Denied(String),
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -93,8 +102,29 @@ pub enum ApprovalError {
     Expired,
     #[error("this request is about another point than the one shown")]
     Mismatch,
+    /// Recording the standing rule failed; the request still waits.
+    #[error("{0}")]
+    Permission(#[from] PermissionError),
     #[error("approved, but the order failed: {0}")]
     Command(CommandError),
+}
+
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum PermissionError {
+    #[error("only a human, from the dashboard, can change permissions")]
+    HumanOnly,
+    #[error("unknown point")]
+    UnknownPoint,
+    #[error("invalid point id")]
+    Invalid,
+    #[error("could not persist permissions: {0}")]
+    Persist(String),
+}
+
+impl From<std::io::Error> for PermissionError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Persist(e.to_string())
+    }
 }
 
 /// How long a held order waits for a human.
@@ -226,6 +256,8 @@ struct Inner {
     events: broadcast::Sender<Event>,
     /// Serializes label writes so the file always matches the model.
     label_write: tokio::sync::Mutex<()>,
+    /// Serializes permission writes so the file always matches the model.
+    permission_write: tokio::sync::Mutex<()>,
     /// Where each instance last reached its device.
     addresses: Mutex<addresses::Book>,
     /// Serializes address writes so the file always matches the book.
@@ -257,6 +289,16 @@ const MAX_PUBLISHED: usize = 4;
 /// A camera's last image and when it was taken; its viewers wait on this lock.
 type LastImage = Arc<tokio::sync::Mutex<Option<(Instant, crate::media::Image)>>>;
 
+/// A standing rule as served to the surfaces.
+#[derive(Clone, Debug, Serialize)]
+pub struct PermissionView {
+    pub point: PointId,
+    pub policy: Policy,
+    /// The point is gone (device removed): the rule waits, unused.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub orphaned: bool,
+}
+
 #[derive(Debug, Default)]
 struct Model {
     devices: BTreeMap<DeviceId, Arc<Device>>,
@@ -272,6 +314,8 @@ struct Model {
     held_offline: HashMap<DeviceId, Option<bool>>,
     drivers: BTreeMap<InstanceId, DriverSlot>,
     labels: BTreeMap<DeviceId, Label>,
+    /// Standing permissions a human set: point → « always » / « never ».
+    permissions: BTreeMap<PointId, Policy>,
     snapshots: HashMap<DeviceId, Arc<dyn crate::media::SnapshotSource>>,
     printers: HashMap<DeviceId, Arc<dyn crate::media::PrintSink>>,
 }
@@ -297,6 +341,10 @@ impl Hub {
     pub fn new(opts: HubOptions) -> std::io::Result<Self> {
         let labels = match &opts.labels_path {
             Some(path) => labels::load(path)?,
+            None => BTreeMap::new(),
+        };
+        let permissions = match &opts.permissions_path {
+            Some(path) => permissions::load(path)?,
             None => BTreeMap::new(),
         };
         let restored = match &opts.state_path {
@@ -342,6 +390,7 @@ impl Hub {
             model: RwLock::new(Model {
                 restored,
                 labels,
+                permissions,
                 ..Model::default()
             }),
             journal: Mutex::new(Journal {
@@ -354,6 +403,7 @@ impl Hub {
             secrets_problem,
             events,
             label_write: tokio::sync::Mutex::new(()),
+            permission_write: tokio::sync::Mutex::new(()),
             addresses: Mutex::new(book),
             address_write: tokio::sync::Mutex::new(()),
             state_dirty: AtomicBool::new(false),
@@ -503,6 +553,7 @@ impl Hub {
                     let id = self.hold(point, &value, origin, actor.clone(), &reason);
                     Err(CommandError::NeedsApproval { id, reason })
                 }
+                Verdict::Denied(reason) => Err(CommandError::Denied(reason)),
             },
         };
         let outcome =
@@ -533,16 +584,31 @@ impl Hub {
     pub fn would_hold(&self, point: &PointId, origin: Origin) -> Option<String> {
         match self.verdict(point, origin) {
             Verdict::Allow => None,
-            Verdict::Approval(reason) => Some(reason),
+            Verdict::Approval(reason) | Verdict::Denied(reason) => Some(reason),
         }
     }
 
     /// What the guard says about an order on this point from this origin.
     fn verdict(&self, point: &PointId, origin: Origin) -> Verdict {
+        // Humans (a PIN session), the system, and approved automations are
+        // obeyed: a standing rule only speaks to everyone else.
+        let agent = !matches!(origin, Origin::Ui | Origin::System | Origin::Automation);
+        if agent {
+            // A human's standing rule on the point speaks first: « always »
+            // lifts every hold this order would meet (machine, protected
+            // room, quiet hours), « never » refuses it — voice, API and the
+            // dashboard without a code alike.
+            match self.read().permissions.get(point) {
+                Some(Policy::Always) => return Verdict::Allow,
+                Some(Policy::Never) => {
+                    return Verdict::Denied(moli_i18n::tr!("serveur.garde.regle_jamais"));
+                }
+                None => {}
+            }
+        }
         // Stopping a machine at work (a print, a computer) is a person's
         // call, whatever the room: an agent asks, and so does the dashboard
         // without a code.
-        let agent = !matches!(origin, Origin::Ui | Origin::System | Origin::Automation);
         if agent && self.is_control(point) {
             return Verdict::Approval(moli_i18n::tr!("serveur.garde.machine"));
         }
@@ -729,11 +795,15 @@ impl Hub {
     /// A human approves (the order runs now) or denies a held order.
     /// Only the dashboard (`Origin::Ui`) may decide, and it must name the
     /// point it saw: a decision never lands on a request it did not show.
+    /// `remember` also records a standing rule on the point (« always »,
+    /// « never »): it is written *first*, so a failure to persist leaves
+    /// the request still pending instead of silently not applying.
     pub async fn resolve_approval(
         &self,
         id: u64,
         expected_point: &PointId,
         approve: bool,
+        remember: Option<Policy>,
         origin: Origin,
         actor: Option<String>,
     ) -> Result<(), ApprovalError> {
@@ -766,6 +836,11 @@ impl Hub {
                 started,
             );
             return Err(ApprovalError::Expired);
+        }
+        if let Some(policy) = remember {
+            // The standing rule is journaled as its own action.
+            self.set_permission(&request.point, Some(policy), origin, actor.clone())
+                .await?;
         }
         let (decision, outcome, result) = if approve {
             let sent = match self.prepare(&request.point, &request.value) {
@@ -817,6 +892,102 @@ impl Hub {
                 Instant::now(),
             );
         }
+    }
+
+    // ---- standing permissions -------------------------------------------------
+
+    /// The standing rules a human set, oldest point id first.
+    #[must_use]
+    pub fn permissions(&self) -> Vec<PermissionView> {
+        let model = self.read();
+        model
+            .permissions
+            .iter()
+            .map(|(point, &policy)| {
+                let orphaned = point.split().is_none_or(|(device, key)| {
+                    model
+                        .devices
+                        .get(&device)
+                        .is_none_or(|d| d.point(key).is_none())
+                });
+                PermissionView {
+                    point: point.clone(),
+                    policy,
+                    orphaned,
+                }
+            })
+            .collect()
+    }
+
+    /// A human sets (or clears, with `None`) a standing rule on a point:
+    /// « always » lets orders through, « never » refuses them. Only the
+    /// dashboard with a code (`Origin::Ui`) may — a rule an agent could
+    /// write would undo the guard.
+    pub async fn set_permission(
+        &self,
+        point: &PointId,
+        policy: Option<Policy>,
+        origin: Origin,
+        actor: Option<String>,
+    ) -> Result<(), PermissionError> {
+        let started = Instant::now();
+        let result = self.write_permission(point, policy, origin).await;
+        let outcome = match &result {
+            Ok(()) => Outcome::Ok,
+            Err(e) => Outcome::Err(e.to_string()),
+        };
+        self.record(
+            origin,
+            actor,
+            Action::Permission {
+                point: point.clone(),
+                policy,
+            },
+            outcome,
+            started,
+        );
+        result
+    }
+
+    async fn write_permission(
+        &self,
+        point: &PointId,
+        policy: Option<Policy>,
+        origin: Origin,
+    ) -> Result<(), PermissionError> {
+        if origin != Origin::Ui {
+            return Err(PermissionError::HumanOnly);
+        }
+        if point.as_str().len() > MAX_POINT {
+            return Err(PermissionError::Invalid);
+        }
+        let _guard = self.0.permission_write.lock().await;
+        let mut next = {
+            let model = self.read();
+            // A rule on a point that does not exist would silently do
+            // nothing: refuse it instead of leaving a dead rule.
+            let Some((device, key)) = point.split() else {
+                return Err(PermissionError::Invalid);
+            };
+            let known = model
+                .devices
+                .get(&device)
+                .is_some_and(|d| d.point(key).is_some());
+            if !known {
+                return Err(PermissionError::UnknownPoint);
+            }
+            model.permissions.clone()
+        };
+        match policy {
+            Some(policy) => next.insert(point.clone(), policy),
+            None => next.remove(point),
+        };
+        if let Some(path) = &self.0.opts.permissions_path {
+            permissions::save(path, &next).await?;
+        }
+        self.write().permissions = next;
+        self.emit(Event::PermissionsChanged);
+        Ok(())
     }
 
     fn resolved(

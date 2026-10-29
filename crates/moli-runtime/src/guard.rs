@@ -58,6 +58,9 @@ pub enum Verdict {
     Allow,
     /// Needs a human: the reason, in words the human will read.
     Approval(String),
+    /// A standing permission (« never ») refuses this point: no card waits
+    /// for a human, the order is simply not carried out.
+    Denied(String),
 }
 
 /// Policy summary for the surfaces (dashboard badges, agents).

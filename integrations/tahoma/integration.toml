@@ -1,0 +1,25 @@
+[integration]
+id = "tahoma"
+name = "Volets roulants et stores Somfy (TaHoma, Connectivity Kit)"
+brands = ["Somfy"]
+models = ["TaHoma Switch", "Connectivity Kit", "Connexoon"]
+transport = "https"
+driver = "tahoma"
+crate = "moli-tahoma"
+
+[discovery]
+mdns = ["_hap._tcp", "_kizboxdev._tcp"]
+ssdp = []
+ports = []
+
+[needs]
+secrets = ["username", "password"]
+vars = []
+options = []
+
+[origin]
+reused = "Somfy Overkiz API (ha101-1.overkiz.com/enduser-mobile-web/enduserAPI: /login, /setup, /events, /exec/apply)"
+author = "agent"
+
+[[fixture]]
+file = "fixtures/setup.json"

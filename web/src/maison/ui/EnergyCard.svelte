@@ -45,11 +45,18 @@
   const R = 70;
   const C = Math.PI * R;
   const isHc = $derived(/hc/i.test(s?.period ?? ''));
+
+  // A gas-only home: the billed meters are all gas (a daily index — no
+  // live draw, no per-device shares to show).
+  const gasOnly = $derived.by(() => {
+    const billed = (s?.meters ?? []).filter((m) => m.role !== 'appliance');
+    return billed.length > 0 && billed.every((m) => m.fuel === 'gas');
+  });
 </script>
 
-<a class="card energy" href="#/energie" aria-label={t('energie.carte.detail')}>
+<a class="card energy" href="#/energie" aria-label={t(gasOnly ? 'energie.gaz.detail' : 'energie.carte.detail')}>
   <div class="card-head">
-    <h2><Icon name="bolt" size={18} />{t('energie.carte.titre')}</h2>
+    <h2><Icon name={gasOnly ? 'fire' : 'bolt'} size={18} />{t(gasOnly ? 'energie.gaz.titre' : 'energie.carte.titre')}</h2>
     <span class="more" aria-hidden="true"><Icon name="arrow-top-right" size={18} /></span>
   </div>
   {#if s}
@@ -84,6 +91,8 @@
           <small>{t('energie.span.month')}</small><b class="num">{euros(s.month.total.cost, s.currency)}</b>
           {#if billOf(s) != null}<em class="num">→ ~{Math.round(billOf(s))} {s.currency}</em>{/if}
         </div>
+      {:else if gasOnly}
+        <div><small>{t('energie.span.month')}</small><b class="num">{euros(s.month.total.cost, s.currency)}</b></div>
       {:else}
         <div><small>{t('energie.now.titre')}</small><b class="num">{watts(totalNow)}</b></div>
       {/if}

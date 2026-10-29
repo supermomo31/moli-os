@@ -90,7 +90,9 @@ transport. Les briques s'abonnent au bus ; aucune ne parle directement à un pil
 1. le point existe et est inscriptible ; la valeur est validée contre son `PointSpec` (type,
    plage, **longueur**) ;
 2. **garde** : selon l'origine, la pièce et l'heure → exécuté, ou retenu en demande
-   d'approbation (202) qu'un humain libère ; le dashboard (`ui`) est toujours obéi ;
+   d'approbation (202) qu'un humain libère ; le dashboard (`ui`) est toujours obéi.
+   Une règle permanente posée par un humain parle avant la retenue : « toujours »
+   laisse passer, « jamais » refuse (403) — voir `permissions.toml` ;
 3. routage vers le pilote propriétaire avec une **échéance** (5 s) : un ordre que personne
    n'attend plus n'est jamais exécuté, même après une reconnexion ;
 4. journal ;
@@ -107,6 +109,7 @@ transport. Les briques s'abonnent au bus ; aucune ne parle directement à un pil
 | `api`, `mcp`, `cli`, `assistant` | agents et scripts | retenue en pièce protégée, en heures calmes, sur appareil sans pièce | tout le reste |
 
 **Le PIN** (session liée à l'adresse, 30 jours) sert à : approuver une demande retenue,
+poser une permission permanente (« toujours » / « jamais » sur un point),
 valider / allumer / restaurer un automatisme, importer, supprimer, renommer un appareil déjà
 nommé, et commander une pièce protégée ou une machine.
 

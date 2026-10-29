@@ -37,6 +37,10 @@ const CONTINUE_WAIT: Duration = Duration::from_secs(5);
 pub(crate) enum Thought {
     Heard(String),
     Answered(Answer),
+    /// The external Cast speaker finished saying the answer.
+    Spoken {
+        closes: bool,
+    },
     Failed(String),
 }
 
@@ -75,6 +79,7 @@ impl Run {
 pub(crate) struct Voice {
     window: Duration,
     media_base: Option<String>,
+    cast_speaker: Option<String>,
     run: Option<Run>,
     conversation: Vec<Said>,
     conversation_id: String,
@@ -95,11 +100,18 @@ pub(crate) type Thoughts = mpsc::Receiver<(u64, Thought)>;
 type Sent = anyhow::Result<()>;
 
 impl Voice {
-    pub(crate) fn new(window: Duration, media_base: Option<String>) -> (Self, Thoughts) {
+    pub(crate) fn new(
+        window: Duration,
+        media_base: Option<String>,
+        cast_speaker: Option<String>,
+    ) -> (Self, Thoughts) {
         let (thoughts_tx, thoughts) = mpsc::channel(8);
         let voice = Self {
             window,
             media_base: media_base.map(|b| b.trim_end_matches('/').to_owned()),
+            cast_speaker: cast_speaker
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty()),
             run: None,
             conversation: Vec::new(),
             conversation_id: String::new(),
@@ -299,8 +311,10 @@ impl Voice {
                 if closes && reply.trim().is_empty() {
                     return self.end(ctx, id, tx, false).await;
                 }
+                // The satellite plays the answer through its media player:
+                // FLAC, the one format every ESPHome build decodes.
                 let url = match (ctx.voice_brain(), &self.media_base) {
-                    (Some(brain), Some(base)) => brain.voice_url(base, &reply),
+                    (Some(brain), Some(base)) => brain.announcement_url(base, &reply),
                     _ => None,
                 };
                 let Some(url) = url else {
@@ -311,6 +325,11 @@ impl Voice {
                     text: reply.clone(),
                 });
                 let conversation_id = self.conversation_id.clone();
+                if let Some(speaker) = self.cast_speaker.clone() {
+                    return self
+                        .speak_on_cast(ctx, id, tx, &speaker, &reply, &url, closes)
+                        .await;
+                }
                 Self::event(
                     tx,
                     VoiceEvent::IntentEnd,
@@ -331,8 +350,66 @@ impl Voice {
                 Self::state(ctx, id, "speaking");
                 Ok(())
             }
+            Thought::Spoken { closes } => {
+                Self::event(tx, VoiceEvent::TtsEnd, &[]).await?;
+                Self::event(tx, VoiceEvent::RunEnd, &[]).await?;
+                if closes {
+                    self.forget();
+                    Self::state(ctx, id, "idle");
+                } else {
+                    self.continuing = Some(Instant::now() + CONTINUE_WAIT);
+                    Self::state(ctx, id, "listening");
+                }
+                Ok(())
+            }
             Thought::Failed(why) => self.fail(ctx, id, tx, &why).await,
         }
+    }
+
+    /// Shows `reply` on the satellite and says `url` on its paired Cast speaker.
+    #[allow(clippy::too_many_arguments)]
+    async fn speak_on_cast(
+        &mut self,
+        ctx: &DriverCtx,
+        id: &DeviceId,
+        tx: &mut Outbox,
+        speaker: &str,
+        reply: &str,
+        url: &str,
+        closes: bool,
+    ) -> Sent {
+        let conversation_id = self.conversation_id.clone();
+        let cont = if closes { "0" } else { "1" };
+        Self::event(
+            tx,
+            VoiceEvent::IntentEnd,
+            &[
+                ("conversation_id", &conversation_id),
+                ("continue_conversation", cont),
+            ],
+        )
+        .await?;
+        Self::event(tx, VoiceEvent::TtsStart, &[("text", reply)]).await?;
+        self.run = None;
+        Self::state(ctx, id, "speaking");
+        let generation = self.generation;
+        let thoughts_tx = self.thoughts_tx.clone();
+        let pin = ctx.secret(crate::CAST_PIN);
+        let (host, port) = crate::cast_target(speaker);
+        let host = host.to_owned();
+        let url = url.to_owned();
+        tokio::spawn(async move {
+            let outcome = match moli_net::PinnedTls::new(pin) {
+                Ok(tls) => moli_androidtv::cast::speak(&tls, &host, port, &url, "audio/flac").await,
+                Err(e) => Err(e),
+            };
+            let thought = match outcome {
+                Ok(()) => Thought::Spoken { closes },
+                Err(e) => Thought::Failed(format!("{e:#}")),
+            };
+            let _ = thoughts_tx.send((generation, thought)).await;
+        });
+        Ok(())
     }
 
     /// The answer (or the chime) has played.
@@ -418,9 +495,9 @@ impl Voice {
         .await?;
         let chime = self.media_base.as_ref().and_then(|base| {
             let name = ctx.media_publisher().publish(
-                "wav",
+                "flac",
                 Image {
-                    content_type: "audio/wav".into(),
+                    content_type: "audio/flac".into(),
                     bytes: sound::chime(),
                 },
             )?;

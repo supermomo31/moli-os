@@ -15,6 +15,7 @@ mod hub;
 mod journal_log;
 mod labels;
 pub mod media;
+mod permissions;
 mod secrets;
 mod state_cache;
 mod stats;
@@ -25,7 +26,7 @@ pub use addresses::KnownAddress;
 pub use driver::{BoxFuture, CommandRequest, Driver, DriverCtx, MediaPublisher};
 pub use hub::{
     ApprovalError, CORE_NAMESPACE, CommandError, DeviceView, DriverView, Hub, HubOptions,
-    LabelError, LabelPatch, MAX_LABEL, Snapshot,
+    LabelError, LabelPatch, MAX_LABEL, PermissionError, PermissionView, Snapshot,
 };
 pub use secrets::{MasterKey, forget_secret, set_secret};
 pub use stats::Stats;

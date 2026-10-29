@@ -121,6 +121,9 @@ pub struct MeterConfig {
     /// any point of the light, or of a fixture `lumieres:…`). Shown « ≈ ».
     #[serde(default)]
     pub estimate: bool,
+    /// What flows through this meter: gas when it is a gas meter.
+    #[serde(default)]
+    pub fuel: Fuel,
 }
 
 impl MeterConfig {
@@ -130,6 +133,26 @@ impl MeterConfig {
         self.power
             .as_deref()
             .or_else(|| self.integrate.then_some(self.point.as_str()))
+    }
+}
+
+/// What flows through a meter.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Fuel {
+    /// Electricity: what everything assumes by default.
+    #[default]
+    Electricity,
+    /// Gas (Gazpar daily import, a pulse counter…): billed in kWh like
+    /// electricity, but the source may be as coarse as a daily index.
+    Gas,
+}
+
+impl Fuel {
+    /// The default, unmarked fuel.
+    #[must_use]
+    pub fn is_electricity(&self) -> bool {
+        matches!(self, Self::Electricity)
     }
 }
 

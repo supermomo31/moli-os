@@ -1,0 +1,56 @@
+{
+  "rootPlace": {
+    "oid": "00000000-0000-4000-8000-000000000000",
+    "label": "Maison",
+    "subPlaces": [
+      {
+        "oid": "00000000-0000-4000-8000-000000000001",
+        "label": "Salon",
+        "subPlaces": []
+      },
+      {
+        "oid": "00000000-0000-4000-8000-000000000002",
+        "label": "Cuisine",
+        "subPlaces": []
+      }
+    ]
+  },
+  "devices": [
+    {
+      "deviceURL": "io://0000-0000-0001/1000001",
+      "label": "Volet Salon",
+      "controllableName": "io:RollerShutterGenericIOComponent",
+      "placeOID": "00000000-0000-4000-8000-000000000001",
+      "available": true,
+      "definition": {
+        "uiClass": "RollerShutter",
+        "commands": [
+          { "commandName": "open" },
+          { "commandName": "close" },
+          { "commandName": "stop" },
+          { "commandName": "setClosure" }
+        ]
+      },
+      "states": [
+        { "name": "core:ClosureState", "value": 25 },
+        { "name": "core:OpenClosedState", "value": "open" }
+      ]
+    },
+    {
+      "deviceURL": "rts://0000-0000-0001/2000002",
+      "label": "Volet Cuisine",
+      "controllableName": "rts:RollerShutterRTSComponent",
+      "placeOID": "00000000-0000-4000-8000-000000000002",
+      "available": true,
+      "definition": {
+        "uiClass": "RollerShutter",
+        "commands": [
+          { "commandName": "open" },
+          { "commandName": "close" },
+          { "commandName": "my" }
+        ]
+      },
+      "states": []
+    }
+  ]
+}

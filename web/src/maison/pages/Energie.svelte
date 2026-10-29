@@ -79,6 +79,7 @@
 
   const isHc = $derived(/hc/i.test(s?.period ?? ''));
   const vsYesterday = $derived.by(() => {
+    if (gasOnly) return null; // a day lands at once: pacing inside it says nothing
     const t = s?.today.total.kwh;
     const y = s?.yesterday.total.kwh;
     if (t == null || !y) return null;
@@ -134,8 +135,16 @@
   });
   const partsMax = $derived(Math.max(0.01, ...parts.map((p) => p.kwh)));
   const partsTotal = $derived(parts.reduce((t, p) => t + p.kwh, 0));
+
+  // A gas-only home: the billed meters are all gas. The page drops what a
+  // daily index cannot say (live, hourly shapes, per-device shares).
+  const gasOnly = $derived.by(() => {
+    const billed = (s?.meters ?? []).filter((m) => m.role !== 'appliance');
+    return billed.length > 0 && billed.every((m) => m.fuel === 'gas');
+  });
   // This month, the share billed off-peak.
   const offShare = $derived.by(() => {
+    if (gasOnly) return null; // gas has no peak/off-peak periods
     const grid = (s?.meters ?? []).filter((m) => m.role === 'grid');
     const of = (re) => grid.filter((m) => re.test(m.id + m.name)).reduce((t, m) => t + (s.month.meters[m.id]?.kwh ?? 0), 0);
     const off = of(/hc|creuse/i);
@@ -147,6 +156,7 @@
   let tariff = $state(null);
   let week = $state(null);
   async function learn() {
+    if (gasOnly) return; // daily data: no hourly shape to learn
     try {
       const point = energy.summary?.period_point;
       const [t, w] = await Promise.all([
@@ -215,13 +225,20 @@
       : [],
   );
 
-  let range = $state('hour');
+  let range = $state(null);
   let by = $state('devices');
+  let cmp = $state(null);
+  const rangeNow = $derived(range ?? (gasOnly ? 'day' : 'hour'));
+  const byNow = $derived(gasOnly ? 'devices' : by);
+  // Compare each bar with the same day/month a year ago — for a daily gas
+  // index that is the meaningful baseline, so it defaults on there.
+  const cmpNow = $derived((cmp ?? gasOnly) && rangeNow !== 'hour');
   const RANGES = [
     ['hour', 'energie.range.hour'],
     ['day', 'energie.range.day'],
     ['month', 'energie.range.month'],
   ];
+  const rangesNow = $derived(gasOnly ? RANGES.slice(1) : RANGES);
 </script>
 
 <div class="energie">
@@ -238,6 +255,11 @@
   {:else}
     <div class="heads">
       <section class="card now" class:hued={look.hue != null} style:--h={look.hue}>
+        {#if gasOnly}
+          <span class="eyebrow"><Icon name="fire" size={14} /> {t('energie.gaz.titre')}</span>
+          <strong class="big num">{kwh(s.month.total.kwh)} <small>kWh</small></strong>
+          <span class="muted small">{t('energie.gaz.note')}</span>
+        {:else}
         <span class="eyebrow">{t('energie.now.titre')}</span>
         {#if s.live}
           <strong class="big num">{power(meterNow, s.live.unit)}</strong>
@@ -253,6 +275,7 @@
           {#if s.period}<span class="chip {isHc ? 'cool' : 'warm'}">{isHc ? t('energie.hc') : t('energie.hp')}</span>{/if}
           {#if change}<span class="muted small">{t(change.off ? 'energie.now.pleines' : 'energie.now.creuses', { at: clockText(change.at), delay: minutesText(change.minutes) })}</span>{/if}
         </div>
+        {/if}
       </section>
 
       <section class="card">
@@ -323,6 +346,7 @@
       </section>
     {/if}
 
+    {#if !gasOnly}
     <div class="split">
       <section class="card">
         <div class="card-head"><h2><Icon name="flash" size={18} />{t('energie.direct.titre')}</h2></div>
@@ -383,8 +407,9 @@
     </div>
 
     <TariffPie {windows} />
+    {/if}
 
-    {#if profile}
+    {#if profile && !gasOnly}
       <section class="card">
         <div class="card-head"><h2><Icon name="clock" size={18} />{t('energie.journee.titre')}</h2></div>
         <DayProfile {profile} {windows} {base} today={todayHours} now={home.now} />
@@ -397,20 +422,31 @@
     <section class="card">
       <div class="card-head">
         <h2><Icon name="tune" size={18} />{t('energie.histo.titre')}</h2>
+        {#if !gasOnly}
         <div class="seg" role="group" aria-label={t('energie.histo.empile')}>
           <button class:on={by === 'devices'} onclick={() => (by = 'devices')}>{t('energie.histo.appareils')}</button>
           <button class:on={by === 'tariff'} onclick={() => (by = 'tariff')}>{t('energie.histo.tarif')}</button>
         </div>
+        {/if}
+        {#if rangeNow !== 'hour'}
+          <div class="seg" role="group" aria-label={t('energie.histo.an_dernier')}>
+            <button class:on={cmpNow} onclick={() => (cmp = !cmpNow)}>{t('energie.histo.an_dernier')}</button>
+          </div>
+        {/if}
         <div class="seg" role="group" aria-label={t('energie.periode')}>
-          {#each RANGES as [key, label] (key)}
-            <button class:on={range === key} onclick={() => (range = key)}>{t(label)}</button>
+          {#each rangesNow as [key, label] (key)}
+            <button class:on={rangeNow === key} onclick={() => (range = key)}>{t(label)}</button>
           {/each}
         </div>
       </div>
-      <EnergyChart {range} {by} />
+      <EnergyChart range={rangeNow} by={byNow} compare={cmpNow} />
       <p class="foot muted">
-        {by === 'devices' ? t('energie.histo.note_appareils') : t('energie.histo.note_tarif')}
-        {t('energie.histo.avant_moli')}
+        {#if gasOnly}
+          {t('energie.histo.note_gaz')}
+        {:else}
+          {by === 'devices' ? t('energie.histo.note_appareils') : t('energie.histo.note_tarif')}
+          {t('energie.histo.avant_moli')}
+        {/if}
       </p>
     </section>
   {/if}

@@ -47,6 +47,8 @@ pub enum Event {
     Notice {
         notice: Notice,
     },
+    /// A standing permission changed: surfaces refetch the list.
+    PermissionsChanged,
 }
 
 /// A message shown in the dashboard.
@@ -89,6 +91,20 @@ pub enum Decision {
     Approved,
     Denied,
     Expired,
+}
+
+/// A standing rule a human set on one point, kept across restarts: whether
+/// the guard still asks. No rule means the guard decides every time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Policy {
+    /// Orders on this point always go through, whatever the guard would
+    /// hold them for (machine, protected room, quiet hours) and whoever
+    /// non-human asks — voice, API, the dashboard without a code.
+    Always,
+    /// Orders on this point are always refused to everyone but a PIN
+    /// session, which never asks anyway.
+    Never,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,6 +171,12 @@ pub enum Action {
         change: AutomationChange,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fingerprint: Option<String>,
+    },
+    /// A human set (or cleared) a standing permission on a point.
+    Permission {
+        point: PointId,
+        /// `None` clears the rule: the guard decides every time again.
+        policy: Option<Policy>,
     },
     /// A device found again at another address (the box gave it a new one):
     /// its driver talks to it there from then on.

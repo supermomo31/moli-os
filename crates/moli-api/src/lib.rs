@@ -292,6 +292,10 @@ pub fn router(hub: Hub, shutdown: CancellationToken, options: &Options) -> Route
         .route("/api/approvals", get(rest::approvals))
         .route("/api/approvals/{id}", post(rest::decide))
         .route(
+            "/api/permissions",
+            get(rest::permissions).put(rest::set_permission),
+        )
+        .route(
             "/api/session",
             get(rest::session).post(rest::login).delete(rest::logout),
         )

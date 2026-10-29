@@ -5,9 +5,9 @@ use axum::http::header::SET_COOKIE;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
-use moli_core::{DeviceId, Origin, PointId, Value};
+use moli_core::{DeviceId, Origin, PointId, Policy, Value};
 use moli_runtime::guard::Dashboard;
-use moli_runtime::{ApprovalError, CommandError, Hub, LabelError, LabelPatch};
+use moli_runtime::{ApprovalError, CommandError, Hub, LabelError, LabelPatch, PermissionError};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -211,6 +211,11 @@ pub(crate) struct DecisionBody {
     approve: bool,
     /// The point the human saw on the card.
     point: PointId,
+    /// Also record a standing rule on the point: `always` approves this and
+    /// every later order, `never` refuses them all — the decision that
+    /// applies this time follows the rule.
+    #[serde(default)]
+    remember: Option<Policy>,
 }
 
 /// Approve or deny a held order: a human session (PIN) is required, even
@@ -229,8 +234,14 @@ pub(crate) async fn decide(
         Origin::Api
     };
     let actor = Some(caller.describe());
+    // « Always » means approve, « never » means refuse — now and next time.
+    let approve = match body.remember {
+        Some(Policy::Always) => true,
+        Some(Policy::Never) => false,
+        None => body.approve,
+    };
     match hub
-        .resolve_approval(id, &body.point, body.approve, origin, actor)
+        .resolve_approval(id, &body.point, approve, body.remember, origin, actor)
         .await
     {
         Ok(()) => Json(json!({ "ok": true })).into_response(),
@@ -239,7 +250,72 @@ pub(crate) async fn decide(
             error(StatusCode::GONE, &e.to_string())
         }
         Err(e @ ApprovalError::Mismatch) => error(StatusCode::CONFLICT, &e.to_string()),
+        Err(ApprovalError::Permission(e)) => error(StatusCode::FORBIDDEN, &e.to_string()),
         Err(ApprovalError::Command(e)) => error(command_status(&e), &e.to_string()),
+    }
+}
+
+/// The standing permissions (« always », « never ») a human set on points.
+/// A guest sees only the rules of the rooms it lives in.
+pub(crate) async fn permissions(State(hub): State<Hub>, caller: Caller) -> Response {
+    let all = hub.permissions();
+    match caller.person.as_ref().filter(|p| p.is_guest()) {
+        Some(guest) => {
+            let (_, sight) = guest.guest_view(&hub);
+            let visible: Vec<_> = all
+                .into_iter()
+                .filter(|p| p.point.split().is_some_and(|(id, _)| sight.contains(&id)))
+                .collect();
+            Json(visible).into_response()
+        }
+        None => Json(all).into_response(),
+    }
+}
+
+/// What a permission becomes: a standing rule, or none (« ask » again).
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PermissionChoice {
+    Always,
+    Never,
+    Ask,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PermissionBody {
+    point: PointId,
+    policy: PermissionChoice,
+}
+
+/// Set or clear a standing rule on a point: a human session (PIN) is
+/// required — a rule an agent could write would undo the guard.
+pub(crate) async fn set_permission(
+    State(hub): State<Hub>,
+    Extension(humans): Humans,
+    caller: Caller,
+    headers: HeaderMap,
+    Json(body): Json<PermissionBody>,
+) -> Response {
+    let origin = if humans.is_human(&headers, &caller.key) {
+        Origin::Ui
+    } else {
+        Origin::Api
+    };
+    let actor = Some(caller.describe());
+    let policy = match body.policy {
+        PermissionChoice::Always => Some(Policy::Always),
+        PermissionChoice::Never => Some(Policy::Never),
+        PermissionChoice::Ask => None,
+    };
+    match hub.set_permission(&body.point, policy, origin, actor).await {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e @ PermissionError::HumanOnly) => error(StatusCode::FORBIDDEN, &e.to_string()),
+        Err(e @ (PermissionError::UnknownPoint | PermissionError::Invalid)) => {
+            error(StatusCode::NOT_FOUND, &e.to_string())
+        }
+        Err(e @ PermissionError::Persist(_)) => {
+            error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())
+        }
     }
 }
 
@@ -247,7 +323,7 @@ pub(crate) fn command_status(e: &CommandError) -> StatusCode {
     match e {
         CommandError::NeedsApproval { .. } => StatusCode::ACCEPTED,
         CommandError::UnknownPoint => StatusCode::NOT_FOUND,
-        CommandError::ReadOnly => StatusCode::FORBIDDEN,
+        CommandError::ReadOnly | CommandError::Denied(_) => StatusCode::FORBIDDEN,
         CommandError::Invalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
         CommandError::DriverUnavailable | CommandError::Busy => StatusCode::SERVICE_UNAVAILABLE,
         CommandError::Timeout => StatusCode::GATEWAY_TIMEOUT,

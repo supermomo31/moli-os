@@ -17,6 +17,7 @@ use crate::proto::{Writer, parse};
 pub const PORT: u16 = 8009;
 const SENDER: &str = "sender-moli";
 const RECEIVER: &str = "receiver-0";
+const DEFAULT_MEDIA_RECEIVER: &str = "CC1AD845";
 const NS_CONNECTION: &str = "urn:x-cast:com.google.cast.tp.connection";
 const NS_HEARTBEAT: &str = "urn:x-cast:com.google.cast.tp.heartbeat";
 const NS_RECEIVER: &str = "urn:x-cast:com.google.cast.receiver";
@@ -27,9 +28,11 @@ const POLL: Duration = Duration::from_secs(10);
 const MEDIA_EVERY: u32 = 6;
 /// The receiver answers every heartbeat: this long silent, it is gone.
 const QUIET: Duration = Duration::from_secs(35);
+/// How long a spoken sentence may take to launch and play.
+const SPEAK_LIMIT: Duration = Duration::from_secs(30);
 const MAX_MESSAGE: usize = 256 * 1024;
 
-/// What the screen shows, as Cast knows it.
+/// What the screen or speaker plays, as Cast knows it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Playing {
     /// The app's name (« Disney+ », « YouTube »); `None`: nothing casts.
@@ -45,6 +48,10 @@ pub struct Playing {
     pub duration: Option<f64>,
     /// Seconds, when last told.
     pub position: Option<f64>,
+    /// The receiver's volume, 0 to 100.
+    pub volume: Option<f64>,
+    /// Whether the receiver is muted.
+    pub muted: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -54,30 +61,51 @@ pub enum Event {
     Lost,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Order {
     Play,
     Pause,
     Stop,
+    /// Receiver volume, `0.0..=1.0`.
+    Volume(f64),
+    Mute(bool),
+    /// Launches the default media receiver (if needed) and plays `url`.
+    Load {
+        url: String,
+        mime: String,
+    },
 }
 
 /// The app being followed and its media session.
 #[derive(Default)]
 struct Follow {
+    app_id: Option<String>,
     transport: Option<String>,
     session: Option<u64>,
     playing: Playing,
 }
 
-/// One connection, until it fails or `orders` closes (`Ok`).
+/// One connection on [`PORT`], until it fails or `orders` closes (`Ok`).
 pub async fn session(
     tls: &PinnedTls,
     host: &str,
     orders: &mut mpsc::Receiver<Order>,
     events: &mpsc::Sender<Event>,
 ) -> anyhow::Result<()> {
-    let stream = tls.connect(host, PORT).await.context("cast")?;
-    // An order given while the TV was away is not run now, late.
+    session_port(tls, host, PORT, orders, events).await
+}
+
+/// One connection on `port`, until it fails or `orders` closes (`Ok`).
+#[allow(clippy::too_many_lines)]
+pub async fn session_port(
+    tls: &PinnedTls,
+    host: &str,
+    port: u16,
+    orders: &mut mpsc::Receiver<Order>,
+    events: &mpsc::Sender<Event>,
+) -> anyhow::Result<()> {
+    let stream = tls.connect(host, port).await.context("cast")?;
+    // An order given while the device was away is not run now, late.
     while orders.try_recv().is_ok() {}
     let (mut read, mut write) = tokio::io::split(stream);
     let (frames_tx, mut frames) = mpsc::channel::<Vec<u8>>(16);
@@ -91,8 +119,10 @@ pub async fn session(
     let result: anyhow::Result<()> = async {
         let mut follow = Follow::default();
         let mut told: Option<Playing> = None;
+        let mut pending_load: Option<(String, String)> = None;
         let mut request = 1u64;
         send(&mut write, RECEIVER, NS_CONNECTION, &json!({ "type": "CONNECT" })).await?;
+        send(&mut write, RECEIVER, NS_RECEIVER, &json!({ "type": "GET_STATUS", "requestId": request })).await?;
         let mut tick = tokio::time::interval(POLL);
         let mut ticks = 0u32;
         loop {
@@ -108,7 +138,7 @@ pub async fn session(
                     }
                 }
                 frame = tokio::time::timeout(QUIET, frames.recv()) => {
-                    let frame = frame.context("the TV stopped answering")?.context("the TV closed the connection")?;
+                    let frame = frame.context("the Cast device stopped answering")?.context("the Cast device closed the connection")?;
                     let Some((source, namespace, body)) = envelope(&frame) else { continue };
                     match (namespace.as_str(), body["type"].as_str()) {
                         (NS_HEARTBEAT, Some("PING")) => {
@@ -120,9 +150,17 @@ pub async fn session(
                                 send(&mut write, &transport, NS_CONNECTION, &json!({ "type": "CONNECT" })).await?;
                                 send(&mut write, &transport, NS_MEDIA, &json!({ "type": "GET_STATUS", "requestId": request })).await?;
                             }
+                            if follow.app_id.as_deref() == Some(DEFAULT_MEDIA_RECEIVER)
+                                && let Some(transport) = follow.transport.clone()
+                                && let Some((url, mime)) = pending_load.take()
+                            {
+                                request += 1;
+                                send(&mut write, &transport, NS_MEDIA, &load_body(request, &url, &mime)).await?;
+                            }
                         }
                         (NS_MEDIA, Some("MEDIA_STATUS")) => follow.media(&body),
                         (NS_CONNECTION, Some("CLOSE")) if follow.transport.as_deref() == Some(source.as_str()) => {
+                            follow.app_id = None;
                             follow.transport = None;
                             follow.session = None;
                         }
@@ -135,17 +173,43 @@ pub async fn session(
                 }
                 order = orders.recv() => {
                     let Some(order) = order else { return Ok(()) };
-                    let (Some(transport), Some(session)) = (follow.transport.clone(), follow.session) else {
-                        tracing::debug!("cast: nothing to control");
-                        continue;
-                    };
-                    request += 1;
-                    let kind = match order {
-                        Order::Play => "PLAY",
-                        Order::Pause => "PAUSE",
-                        Order::Stop => "STOP",
-                    };
-                    send(&mut write, &transport, NS_MEDIA, &json!({ "type": kind, "mediaSessionId": session, "requestId": request })).await?;
+                    match order {
+                        Order::Play | Order::Pause | Order::Stop => {
+                            let (Some(transport), Some(session)) = (follow.transport.clone(), follow.session) else {
+                                tracing::debug!("cast: nothing to control");
+                                continue;
+                            };
+                            request += 1;
+                            let kind = match order {
+                                Order::Play => "PLAY",
+                                Order::Pause => "PAUSE",
+                                Order::Stop => "STOP",
+                                _ => unreachable!(),
+                            };
+                            send(&mut write, &transport, NS_MEDIA, &json!({ "type": kind, "mediaSessionId": session, "requestId": request })).await?;
+                        }
+                        Order::Volume(level) => {
+                            request += 1;
+                            let level = level.clamp(0.0, 1.0);
+                            send(&mut write, RECEIVER, NS_RECEIVER, &json!({ "type": "SET_VOLUME", "volume": { "level": level }, "requestId": request })).await?;
+                        }
+                        Order::Mute(muted) => {
+                            request += 1;
+                            send(&mut write, RECEIVER, NS_RECEIVER, &json!({ "type": "SET_VOLUME", "volume": { "muted": muted }, "requestId": request })).await?;
+                        }
+                        Order::Load { url, mime } => {
+                            if follow.app_id.as_deref() == Some(DEFAULT_MEDIA_RECEIVER)
+                                && let Some(transport) = follow.transport.clone()
+                            {
+                                request += 1;
+                                send(&mut write, &transport, NS_MEDIA, &load_body(request, &url, &mime)).await?;
+                            } else {
+                                pending_load = Some((url, mime));
+                                request += 1;
+                                send(&mut write, RECEIVER, NS_RECEIVER, &json!({ "type": "LAUNCH", "appId": DEFAULT_MEDIA_RECEIVER, "requestId": request })).await?;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -155,23 +219,173 @@ pub async fn session(
     result
 }
 
+/// Plays `url` (`mime`) on a Cast speaker and returns once the sentence has
+/// finished playing (or fails if the speaker refuses or times out).
+pub async fn speak(
+    tls: &PinnedTls,
+    host: &str,
+    port: u16,
+    url: &str,
+    mime: &str,
+) -> anyhow::Result<()> {
+    let stream = tls.connect(host, port).await.context("cast")?;
+    tokio::time::timeout(SPEAK_LIMIT, speak_on(stream, url, mime))
+        .await
+        .context("cast: speech timed out")?
+}
+
+async fn speak_on<S: AsyncRead + AsyncWrite + Unpin>(
+    mut stream: S,
+    url: &str,
+    mime: &str,
+) -> anyhow::Result<()> {
+    let mut request = 1u64;
+    send(
+        &mut stream,
+        RECEIVER,
+        NS_CONNECTION,
+        &json!({ "type": "CONNECT" }),
+    )
+    .await?;
+    send(
+        &mut stream,
+        RECEIVER,
+        NS_RECEIVER,
+        &json!({ "type": "LAUNCH", "appId": DEFAULT_MEDIA_RECEIVER, "requestId": request }),
+    )
+    .await?;
+    let mut connected_transport: Option<String> = None;
+    let mut load_request: Option<u64> = None;
+    let mut started = false;
+    loop {
+        let frame = read_frame(&mut stream).await?;
+        let Some((source, namespace, body)) = envelope(&frame) else {
+            continue;
+        };
+        match (namespace.as_str(), body["type"].as_str()) {
+            (NS_HEARTBEAT, Some("PING")) => {
+                send(
+                    &mut stream,
+                    &source,
+                    NS_HEARTBEAT,
+                    &json!({ "type": "PONG" }),
+                )
+                .await?;
+            }
+            (NS_RECEIVER, Some("LAUNCH_ERROR")) => {
+                let reason = body["reason"].as_str().unwrap_or("launch refused");
+                bail!("cast launch failed: {reason}");
+            }
+            (NS_RECEIVER, Some("RECEIVER_STATUS")) if connected_transport.is_none() => {
+                let transport = body["status"]["applications"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|a| a["appId"].as_str() == Some(DEFAULT_MEDIA_RECEIVER))
+                    .and_then(|a| a["transportId"].as_str())
+                    .map(str::to_owned);
+                if let Some(transport) = transport {
+                    send(
+                        &mut stream,
+                        &transport,
+                        NS_CONNECTION,
+                        &json!({ "type": "CONNECT" }),
+                    )
+                    .await?;
+                    request += 1;
+                    load_request = Some(request);
+                    send(
+                        &mut stream,
+                        &transport,
+                        NS_MEDIA,
+                        &load_body(request, url, mime),
+                    )
+                    .await?;
+                    connected_transport = Some(transport);
+                }
+            }
+            (NS_MEDIA, Some("LOAD_FAILED" | "LOAD_CANCELLED" | "INVALID_REQUEST")) => {
+                bail!(
+                    "cast media refused ({})",
+                    body["type"].as_str().unwrap_or("error")
+                );
+            }
+            (NS_MEDIA, Some("MEDIA_STATUS")) if connected_transport.is_some() => {
+                let Some(status) = body["status"].as_array().and_then(|s| s.first()) else {
+                    continue;
+                };
+                let state = status["playerState"].as_str().unwrap_or_default();
+                let reason = status["idleReason"].as_str();
+                let answered_load =
+                    load_request.is_some_and(|id| body["requestId"].as_u64() == Some(id));
+                if matches!(state, "BUFFERING" | "PLAYING" | "PAUSED") || answered_load {
+                    started = true;
+                }
+                if reason == Some("ERROR") {
+                    bail!("cast playback error");
+                }
+                if state == "IDLE"
+                    && (matches!(reason, Some("FINISHED" | "CANCELLED" | "INTERRUPTED"))
+                        || (started && reason.is_some()))
+                {
+                    return Ok(());
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn load_body(request: u64, url: &str, mime: &str) -> Json {
+    json!({
+        "type": "LOAD",
+        "requestId": request,
+        "autoplay": true,
+        "media": {
+            "contentId": url,
+            "contentType": mime,
+            "streamType": "BUFFERED",
+        }
+    })
+}
+
 impl Follow {
-    /// The receiver's status: which app runs. Returns the app's transport
-    /// when it is new (to connect to and ask).
+    /// The receiver's status: which app runs and the receiver's volume.
+    /// Returns the app's transport when it is new (to connect to and ask).
     fn receiver(&mut self, body: &Json) -> Option<String> {
+        let volume = body["status"]["volume"]["level"]
+            .as_f64()
+            .map(|v| (v * 100.0).round())
+            .or(self.playing.volume);
+        let muted = body["status"]["volume"]["muted"]
+            .as_bool()
+            .or(self.playing.muted);
         let apps = body["status"]["applications"].as_array();
         let app = apps
             .into_iter()
             .flatten()
             .find(|a| a["isIdleScreen"].as_bool() != Some(true));
         let Some(app) = app else {
-            *self = Self::default();
+            *self = Self {
+                playing: Playing {
+                    volume,
+                    muted,
+                    ..Playing::default()
+                },
+                ..Self::default()
+            };
             return None;
         };
+        self.app_id = app["appId"].as_str().map(str::to_owned);
         let name = app["displayName"].as_str().map(str::to_owned);
-        if self.playing.app != name {
+        if self.playing.app == name {
+            self.playing.volume = volume;
+            self.playing.muted = muted;
+        } else {
             self.playing = Playing {
                 app: name,
+                volume,
+                muted,
                 ..Playing::default()
             };
         }
@@ -200,6 +414,8 @@ impl Follow {
             self.session = None;
             self.playing = Playing {
                 app: self.playing.app.take(),
+                volume: self.playing.volume,
+                muted: self.playing.muted,
                 ..Playing::default()
             };
             return;
@@ -306,6 +522,8 @@ mod tests {
                 image: Some("https://img.example/b.jpg".into()),
                 duration: Some(496.0),
                 position: Some(12.0),
+                volume: None,
+                muted: None,
             }
         );
         assert_eq!(f.session, Some(7));
@@ -313,12 +531,100 @@ mod tests {
         f.media(&json!({ "status": [{ "mediaSessionId": 7, "playerState": "PAUSED", "currentTime": 30.0 }] }));
         assert_eq!(f.playing.state.as_deref(), Some("paused"));
         assert_eq!(f.playing.title.as_deref(), Some("Bluey"));
-        // Back to the home screen: nothing plays.
-        let idle =
-            json!([{ "displayName": "Backdrop", "isIdleScreen": true, "transportId": "t-0" }]);
-        assert_eq!(f.receiver(&receiver(&idle)), None);
-        assert_eq!(f.playing, Playing::default());
+        // Back to the home screen: nothing plays, volume is read from the receiver.
+        let idle = json!({
+            "type": "RECEIVER_STATUS",
+            "status": {
+                "volume": { "level": 0.35, "muted": false },
+                "applications": [{ "displayName": "Backdrop", "isIdleScreen": true, "transportId": "t-0" }]
+            }
+        });
+        assert_eq!(f.receiver(&idle), None);
+        assert_eq!(
+            f.playing,
+            Playing {
+                volume: Some(35.0),
+                muted: Some(false),
+                ..Playing::default()
+            }
+        );
         assert_eq!(f.transport, None);
+    }
+
+    #[tokio::test]
+    async fn speaks_and_waits_until_finished() {
+        let (client, mut speaker) = tokio::io::duplex(4096);
+        let task = tokio::spawn(async move {
+            // CONNECT + LAUNCH on receiver-0
+            let (_, ns1, b1) = envelope(&read_frame(&mut speaker).await.unwrap()).unwrap();
+            assert_eq!(
+                (ns1.as_str(), b1["type"].as_str()),
+                (NS_CONNECTION, Some("CONNECT"))
+            );
+            let (_, ns2, b2) = envelope(&read_frame(&mut speaker).await.unwrap()).unwrap();
+            assert_eq!(
+                (ns2.as_str(), b2["type"].as_str()),
+                (NS_RECEIVER, Some("LAUNCH"))
+            );
+            assert_eq!(b2["appId"].as_str(), Some(DEFAULT_MEDIA_RECEIVER));
+            send(
+                &mut speaker,
+                SENDER,
+                NS_RECEIVER,
+                &json!({
+                    "type": "RECEIVER_STATUS",
+                    "status": {
+                        "applications": [{
+                            "appId": DEFAULT_MEDIA_RECEIVER,
+                            "displayName": "Default Media Receiver",
+                            "transportId": "web-9",
+                            "namespaces": [{ "name": NS_MEDIA }]
+                        }]
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+            // CONNECT + LOAD on web-9
+            let (_, ns3, b3) = envelope(&read_frame(&mut speaker).await.unwrap()).unwrap();
+            assert_eq!(
+                (ns3.as_str(), b3["type"].as_str()),
+                (NS_CONNECTION, Some("CONNECT"))
+            );
+            let (_, ns4, b4) = envelope(&read_frame(&mut speaker).await.unwrap()).unwrap();
+            assert_eq!(
+                (ns4.as_str(), b4["type"].as_str()),
+                (NS_MEDIA, Some("LOAD"))
+            );
+            assert_eq!(
+                b4["media"]["contentId"].as_str(),
+                Some("http://192.168.1.x:8790/api/voice/abc.flac")
+            );
+            send(
+                &mut speaker,
+                SENDER,
+                NS_MEDIA,
+                &json!({ "type": "MEDIA_STATUS", "status": [{ "mediaSessionId": 1, "playerState": "PLAYING" }] }),
+            )
+            .await
+            .unwrap();
+            send(
+                &mut speaker,
+                SENDER,
+                NS_MEDIA,
+                &json!({ "type": "MEDIA_STATUS", "status": [{ "mediaSessionId": 1, "playerState": "IDLE", "idleReason": "FINISHED" }] }),
+            )
+            .await
+            .unwrap();
+        });
+        speak_on(
+            client,
+            "http://192.168.1.x:8790/api/voice/abc.flac",
+            "audio/flac",
+        )
+        .await
+        .unwrap();
+        task.await.unwrap();
     }
 
     #[tokio::test]

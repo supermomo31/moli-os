@@ -41,8 +41,12 @@ moli-phones = { path = "crates/moli-phones" }
 moli-ambiance = { path = "crates/moli-ambiance" }
 moli-moonraker = { path = "crates/moli-moonraker" }
 moli-androidtv = { path = "crates/moli-androidtv" }
+moli-cast = { path = "crates/moli-cast" }
 moli-esphome = { path = "crates/moli-esphome" }
 moli-alexa = { path = "crates/moli-alexa" }
+moli-tado = { path = "crates/moli-tado" }
+moli-netatmo = { path = "crates/moli-netatmo" }
+moli-tahoma = { path = "crates/moli-tahoma" }
 moli-demo = { path = "crates/moli-demo" }
 moli-weather = { path = "crates/moli-weather" }
 

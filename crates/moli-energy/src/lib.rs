@@ -25,7 +25,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-pub use config::{Config, MeterConfig, Reset, Role, Tariff};
+pub use config::{Config, Fuel, MeterConfig, Reset, Role, Tariff};
 use meter::{Integral, Outcome, Reading, Tracker};
 pub use report::{Amount, Bucket, Period, Step};
 pub use store::EnergyError;
@@ -68,6 +68,9 @@ pub struct MeterInfo {
     /// Estimated from the light's model, not measured.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub estimated: bool,
+    /// Gas (or another fuel) when the meter is not electric.
+    #[serde(skip_serializing_if = "Fuel::is_electricity")]
+    pub fuel: Fuel,
 }
 
 /// The supplier's meter right now (`[energy.live]`).
@@ -192,6 +195,7 @@ impl Energy {
                     within: m.within.clone(),
                     feeds: m.feeds.clone(),
                     estimated: m.estimate,
+                    fuel: m.fuel,
                 }
             })
             .collect()

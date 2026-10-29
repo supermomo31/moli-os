@@ -220,6 +220,10 @@ Chemin d'une commande (`Hub::command`, `crates/moli-runtime/src/hub.rs`) :
 
 Décision humaine : `POST /api/approvals/{id}` avec `x-moli-origin: ui`, le cookie de
 session, et le corps `{"approve": true|false, "point": "<point affiché sur la carte>"}`.
+Le champ facultatif `remember` (`"always"` ou `"never"`) enregistre en plus une
+**permission permanente** sur le point — `"always"` approuve cette fois et les suivantes,
+`"never"` refuse — écrite avant la décision : si sa persistance échoue, la demande reste
+en attente plutôt que de laisser croire que la règle tient (voir § 2 « permissions »).
 
 | Contrôle | Échec |
 |---|---|
@@ -255,6 +259,7 @@ Toute écriture est journalisée, réussie ou non (`JournalEntry`, `crates/moli-
 - `{"kind":"command","point":"…","value":…}`
 - `{"kind":"label","device":"…","label":{"name":"…","room":"…"}}` (label vide si refus)
 - `{"kind":"approval","request":<id>,"point":"…","value":…,"decision":"approved|denied|expired"}`
+- `{"kind":"permission","point":"…","policy":"always|never|null"}` (`null` : règle levée)
 
 Stockage : `data/journal.jsonl` (ajout seul) + les 500 dernières entrées en mémoire.
 Lecture : `GET /api/journal`, outil MCP `get_journal`, événements SSE `journal`.
@@ -297,7 +302,9 @@ Légende « Accès » : **libre** = aucune condition au-delà de la garde `Host`
 | PUT | `/api/labels/{id}` | libre ; changer la pièce d'un appareil gardé exige `ui` | `{name?, room?}` : absent = inchangé, `""` = effacé | `Label` `{name?, room?}` | `404` unknown device ; `403` changement de pièce gardé ; `500` écriture de `labels.toml` |
 | GET | `/api/journal` | libre | `?limit=` (défaut 100) | `[JournalEntry]`, plus récent d'abord (500 au plus en mémoire) | `400` requête invalide |
 | GET | `/api/approvals` | libre ; un invité : ses pièces seulement | aucune | `[ApprovalRequest]`, plus ancien d'abord | aucune |
-| POST | `/api/approvals/{id}` | **humain** + `x-moli-origin: ui` | `{approve: bool, point}` | `{ok:true}` | `403` ; `409` mauvais point ; `410` inconnue / expirée ; erreurs de commande si l'ordre approuvé échoue ; `400` id non numérique |
+| POST | `/api/approvals/{id}` | **humain** + `x-moli-origin: ui` | `{approve: bool, point, remember?: "always"|"never"}` | `{ok:true}` | `403` ; `409` mauvais point ; `410` inconnue / expirée ; erreurs de commande si l'ordre approuvé échoue ; `400` id non numérique |
+| GET | `/api/permissions` | libre ; un invité : les points de ses pièces | aucune | `[{point, policy: "always"|"never", orphaned?}]` | aucune |
+| PUT | `/api/permissions` | **humain** | `{point, policy: "always"|"never"|"ask"}` (`"ask"` lève la règle) | `{ok:true}` | `403` pas une session PIN ; `404` point inconnu ou invalide ; `500` écriture de `permissions.toml` |
 
 **Session humaine**
 

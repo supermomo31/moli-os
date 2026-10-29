@@ -48,7 +48,9 @@
         <div class="actions">
           {#if hub.session.human}
             <button class="yes" onclick={() => decide(request, true)}>{t('systeme.approbations.autoriser')}</button>
+            <button class="always" title={t('systeme.approbations.toujours_aide')} onclick={() => decide(request, true, 'always')}>{t('systeme.approbations.toujours')}</button>
             <button class="no" onclick={() => decide(request, false)}>{t('systeme.approbations.refuser')}</button>
+            <button class="never" title={t('systeme.approbations.jamais_aide')} onclick={() => decide(request, false, 'never')}>{t('systeme.approbations.jamais')}</button>
           {:else}
             <span class="hint">{t('systeme.approbations.indice')}</span>
           {/if}
@@ -97,8 +99,17 @@
     background: var(--sun);
     color: #161512;
   }
+  .always {
+    background: transparent;
+    border-color: var(--sun);
+  }
   .no {
     background: transparent;
+  }
+  .never {
+    background: transparent;
+    color: #a33;
+    border-color: #a33;
   }
   .declared {
     color: var(--ink-2);

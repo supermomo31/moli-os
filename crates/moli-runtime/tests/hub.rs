@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use moli_core::{
     Access, Action, Device, DriverStatus, Event, InstanceId, Kind, Origin, Outcome, PointId,
-    PointSpec, Semantic, Value,
+    PointSpec, Policy, Semantic, Value,
 };
 use moli_runtime::{
     BoxFuture, CommandError, Driver, DriverCtx, Hub, HubOptions, LabelPatch, spawn_driver,
@@ -375,14 +375,14 @@ async fn guard_holds_agents_and_obeys_humans() {
 
     // An agent cannot approve its own request.
     let self_approved = hub
-        .resolve_approval(id, &point("state"), true, Origin::Mcp, None)
+        .resolve_approval(id, &point("state"), true, None, Origin::Mcp, None)
         .await;
     assert_eq!(self_approved, Err(moli_runtime::ApprovalError::HumanOnly));
     assert_eq!(hub.approvals().len(), 1);
 
     // A decision naming another point than the held one is refused.
     let wrong = hub
-        .resolve_approval(id, &point("power"), true, Origin::Ui, None)
+        .resolve_approval(id, &point("power"), true, None, Origin::Ui, None)
         .await;
     assert_eq!(wrong, Err(moli_runtime::ApprovalError::Mismatch));
     assert_eq!(hub.approvals().len(), 1);
@@ -393,13 +393,20 @@ async fn guard_holds_agents_and_obeys_humans() {
     );
 
     // The human approves: the order runs, exactly once.
-    hub.resolve_approval(id, &point("state"), true, Origin::Ui, Some("sam".into()))
-        .await
-        .unwrap();
+    hub.resolve_approval(
+        id,
+        &point("state"),
+        true,
+        None,
+        Origin::Ui,
+        Some("sam".into()),
+    )
+    .await
+    .unwrap();
     assert_eq!(hub.state(&point("state")).unwrap().value, Value::Bool(true));
     assert!(hub.approvals().is_empty());
     assert_eq!(
-        hub.resolve_approval(id, &point("state"), true, Origin::Ui, None)
+        hub.resolve_approval(id, &point("state"), true, None, Origin::Ui, None)
             .await,
         Err(moli_runtime::ApprovalError::Unknown)
     );
@@ -425,7 +432,7 @@ async fn denied_requests_never_run_and_invalid_ones_are_never_held() {
     else {
         panic!("expected a held order");
     };
-    hub.resolve_approval(id, &point("state"), false, Origin::Ui, None)
+    hub.resolve_approval(id, &point("state"), false, None, Origin::Ui, None)
         .await
         .unwrap();
     assert_eq!(
@@ -498,6 +505,141 @@ async fn stopping_a_machine_is_a_humans_call_in_any_room() {
     hub.command(&point("state"), Value::Bool(true), Origin::Mcp, None)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn standing_permissions_outrank_the_guard_for_non_humans() {
+    let (hub, _cancel) = start(false).await;
+
+    // An agent cannot write a rule: it would undo the guard.
+    assert!(matches!(
+        hub.set_permission(&point("control"), Some(Policy::Always), Origin::Mcp, None)
+            .await,
+        Err(moli_runtime::PermissionError::HumanOnly)
+    ));
+
+    // A rule on a point that does not exist is refused, not left dead.
+    assert!(matches!(
+        hub.set_permission(&point("nope"), Some(Policy::Always), Origin::Ui, None)
+            .await,
+        Err(moli_runtime::PermissionError::UnknownPoint)
+    ));
+
+    // « Always » on the machine point: the assistant no longer waits.
+    hub.set_permission(&point("control"), Some(Policy::Always), Origin::Ui, None)
+        .await
+        .unwrap();
+    hub.command(
+        &point("control"),
+        Value::from("pause"),
+        Origin::Assistant,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        hub.state(&point("control")).unwrap().value,
+        Value::from("pause")
+    );
+
+    // « Never » on a free point: refused, nothing ran, nobody is asked.
+    hub.set_permission(&point("state"), Some(Policy::Never), Origin::Ui, None)
+        .await
+        .unwrap();
+    let refused = hub
+        .command(&point("state"), Value::Bool(true), Origin::Api, None)
+        .await;
+    assert!(matches!(refused, Err(CommandError::Denied(_))));
+    assert!(hub.approvals().is_empty());
+    assert_eq!(
+        hub.state(&point("state")).unwrap().value,
+        Value::Bool(false)
+    );
+
+    // A PIN session still passes everywhere.
+    hub.command(&point("state"), Value::Bool(true), Origin::Ui, None)
+        .await
+        .unwrap();
+
+    // Back to « on demand »: the rule lifted, agents are free again here
+    // (no protected room in this hub).
+    hub.set_permission(&point("state"), None, Origin::Ui, None)
+        .await
+        .unwrap();
+    assert_eq!(hub.permissions().len(), 1);
+    hub.command(&point("state"), Value::Bool(false), Origin::Api, None)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn approving_always_writes_the_standing_rule() {
+    let (hub, _cancel) = start(false).await;
+    let Err(CommandError::NeedsApproval { id, .. }) = hub
+        .command(
+            &point("control"),
+            Value::from("pause"),
+            Origin::Assistant,
+            None,
+        )
+        .await
+    else {
+        panic!("expected a held order")
+    };
+    hub.resolve_approval(
+        id,
+        &point("control"),
+        true,
+        Some(Policy::Always),
+        Origin::Ui,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(hub.permissions().len(), 1);
+    // The next order on the point just goes through.
+    hub.command(
+        &point("control"),
+        Value::from("resume"),
+        Origin::Assistant,
+        None,
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn permissions_persist_and_reload() {
+    let dir = std::env::temp_dir().join(format!("moli-permissions-{}", std::process::id()));
+    let path = dir.join("permissions.toml");
+    let _ = std::fs::remove_file(&path);
+    let opts = HubOptions {
+        permissions_path: Some(path.clone()),
+        ..HubOptions::default()
+    };
+    let (hub, cancel) = start_with(opts.clone()).await;
+    hub.set_permission(&point("control"), Some(Policy::Always), Origin::Ui, None)
+        .await
+        .unwrap();
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("always"));
+    cancel.cancel();
+
+    let (reloaded, cancel2) = start_with(opts).await;
+    let rules = reloaded.permissions();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].policy, Policy::Always);
+    reloaded
+        .command(
+            &point("control"),
+            Value::from("pause"),
+            Origin::Assistant,
+            None,
+        )
+        .await
+        .unwrap();
+    cancel2.cancel();
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[tokio::test]

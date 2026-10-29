@@ -2813,6 +2813,7 @@ mod tests {
             within: None,
             feeds: Vec::new(),
             estimated: false,
+            fuel: moli_energy::Fuel::Electricity,
         };
         let period = |kwh, cost| Period {
             from: 0,

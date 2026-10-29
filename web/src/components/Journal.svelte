@@ -31,6 +31,13 @@
       const verdict = word(VERDICT, 'verdict', a.decision);
       return { target: d ? deviceName(d) : id, detail: t('systeme.journal.demande', { request: a.request, verdict }) };
     }
+    if (a.kind === 'permission') {
+      const id = a.point.slice(0, a.point.indexOf('/'));
+      const d = hub.devices[id];
+      const key = a.point.slice(a.point.indexOf('/') + 1);
+      const rule = a.policy ? t(`systeme.journal.regle.${a.policy}`) : t('systeme.journal.regle.levee');
+      return { target: d ? deviceName(d) : id, detail: `${key} → ${rule}` };
+    }
     if (a.kind === 'address') {
       const d = a.device && hub.devices[a.device];
       return { target: d ? deviceName(d) : a.device || a.instance, detail: t('systeme.journal.adresse', { from: a.from, to: a.to }) };

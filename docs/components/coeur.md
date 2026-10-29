@@ -85,6 +85,25 @@ un humain.**
   un automatisme, l'éditeur montre pour chaque appareil renommé son nom d'origine et son
   identifiant.
 
+### Permissions permanentes (`data/permissions.toml`)
+
+Au-delà des demandes ponctuelles, un humain peut poser une **règle permanente** sur un point
+(`PUT /api/permissions`, boutons « Toujours » / « Jamais » sur les demandes, section
+Permissions de la page Système) :
+
+- `always` : les ordres sur ce point passent toujours, quelle que soit la retenue que la
+  garde leur aurait opposée (machine, pièce protégée, heures calmes, appareil sans pièce)
+  et quelle que soit l'origine non de confiance — voix, API, dashboard sans code. C'est
+  le choix d'un humain, révocable, journalisé — pas un assouplissement décidé par un agent.
+- `never` : les ordres sur ce point sont **refusés** (403) à toute origine non de
+  confiance, même celle que la garde aurait laissée passer. Une session PIN (`ui`) reste
+  toujours obéie : le dernier mot reste à la famille.
+- « sur demande » (pas de règle) : comportement d'origine, la garde décide à chaque fois.
+
+Seul `ui` écrit une règle (un agent qui pourrait la changer défait la garde). Les règles
+sont persistées dans `permissions.toml`, écrites atomiquement, et visibles dans le journal
+(`action: permission`). Une règle dont le point a disparu est marquée orpheline, inactive.
+
 ## Sessions humaines (`moli-api/src/session.rs`)
 
 La famille commande sans code depuis le dashboard (décision D0), hors des pièces protégées

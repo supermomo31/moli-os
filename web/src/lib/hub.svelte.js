@@ -20,6 +20,8 @@ export const hub = $state({
   toasts: [],
   /** @type {any[]} orders held by the guard, waiting for a human */
   approvals: [],
+  /** @type {any[]} standing rules a human set on points (« always », « never ») */
+  permissions: [],
   /** @type {any} protected rooms and quiet hours */
   guard: null,
   /** point whose history is open, or null */
@@ -97,6 +99,9 @@ function applyEvent(e) {
     case 'approval_resolved':
       hub.approvals = hub.approvals.filter((a) => a.id !== e.id);
       break;
+    case 'permissions_changed':
+      loadPermissions();
+      break;
     case 'notice': {
       const id = `${e.notice.ts}-${Math.random()}`;
       hub.notices = [{ ...e.notice, id }, ...hub.notices].slice(0, 4);
@@ -120,6 +125,14 @@ function loadJournal() {
     .catch(() => {});
 }
 
+/** Standing permissions: what the guard does with non-human orders, per point. */
+function loadPermissions() {
+  fetch('/api/permissions')
+    .then((r) => (r.ok ? r.json() : []))
+    .then((list) => (hub.permissions = list))
+    .catch(() => {});
+}
+
 let linked = false;
 
 /** Opens the live link (once: both faces of the dashboard share it). */
@@ -133,6 +146,7 @@ export function connect() {
     hub.connected = true;
     applySnapshot(JSON.parse(m.data));
     loadJournal();
+    loadPermissions();
   });
   source.addEventListener('event', (m) => applyEvent(JSON.parse(m.data)));
   source.onerror = () => (hub.connected = false); // EventSource reconnects on its own
@@ -241,13 +255,15 @@ export async function command(point, value) {
 }
 
 /** A human approves or denies an order the guard held (naming the point
- *  shown on the card, so a decision never lands on another request). */
-export async function decide(request, approve) {
+ *  shown on the card, so a decision never lands on another request).
+ *  `remember` — 'always' or 'never' — also records a standing rule on the
+ *  point: the same choice applies to every later order. */
+export async function decide(request, approve, remember = null) {
   try {
     const res = await fetch(`/api/approvals/${request.id}`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ approve, point: request.point }),
+      body: JSON.stringify({ approve, point: request.point, remember }),
     });
     // Gone: already decided or expired — the card can go.
     if (res.ok || res.status === 410) {
@@ -256,6 +272,22 @@ export async function decide(request, approve) {
     if (!res.ok) throw new Error((await res.json()).error ?? res.statusText);
   } catch (err) {
     toast(t('systeme.hub.decision_non_appliquee', { message: err.message }));
+  }
+}
+
+/** A human sets a standing rule on a point — 'always', 'never', or 'ask'
+ *  which lifts the rule (the guard decides every time again). */
+export async function setPermission(point, policy) {
+  try {
+    const res = await fetch('/api/permissions', {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ point, policy }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error ?? res.statusText);
+    loadPermissions();
+  } catch (err) {
+    toast(t('systeme.hub.permission_non_enregistree', { message: err.message }));
   }
 }
 

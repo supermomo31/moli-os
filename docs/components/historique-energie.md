@@ -66,6 +66,23 @@ Les compteurs cumulés deviennent des **kWh et des euros heure par heure**, gard
 - **Historique repris de HA** (statistiques long terme, lecture seule) :
   `tools/home-assistant/ha-energy-export.py … | docker exec -i moli-os /moli-os energy
   import`, relançable sans doublon.
+- **Gazpar (gaz, quotidien)** : GRDF n'a pas d'API publique pour les particuliers
+  (ADICT est réservé aux entreprises). `tools/grdf/gazpar-export.py` lit le
+  « Mon espace » via PyGazpar — identifiants en variables d'environnement, jamais
+  dans un fichier — et sort les kWh de chaque jour, à donner à `energy import`
+  en tâche planifiée (J-1 ou J-2, rien de temps réel : le compteur ne transmet
+  qu'une fois par jour). Les jours « estimés » sont ignorés : GRDF les corrige,
+  et l'import ne reprend jamais une heure connue. Le compteur se déclare
+  `role = "grid"` avec `price` (€/kWh TTC) et un `point` jamais publié
+  (par exemple `import:gaz/index`) : c'est ce que le fournisseur facture, les
+  kWh du gaz sont bien des kWh — `grid` les fait entrer dans le total, le coût
+  et la projection de la page Énergie (un `appliance` n'y apparaîtrait pas : il
+  n'entre ni dans le total ni dans « le reste », qui exige un compteur `total`
+  et des circuits). `fuel = "gas"` marque le compteur comme gaz : quand tous
+  les compteurs facturés en sont, la page Énergie se met en mode gaz — libellé,
+  icône, pas de jauge direct ni d'analyse horaire ni de répartition par
+  appareil, historique par jour (ces écrans n'auraient rien à montrer d'un
+  relevé quotidien).
 - Surfaces : `/api/energy` (en direct, aujourd'hui, hier, mois + projection, mois dernier,
   part non mesurée), `/api/energy/series?step=hour|day|month`, outil MCP `energy`, page
   Énergie, carte Accueil ; la ligne « Électricité en direct » du prompt de Moli.

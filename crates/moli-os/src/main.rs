@@ -297,6 +297,24 @@ fn demo_fresh(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The hub's persisted state files, all in the data directory.
+fn hub_options(
+    config: &Config,
+    secrets: Option<(std::path::PathBuf, MasterKey)>,
+) -> anyhow::Result<HubOptions> {
+    let data = &config.server.data_dir;
+    Ok(HubOptions {
+        labels_path: Some(data.join("labels.toml")),
+        state_path: Some(data.join("state.json")),
+        permissions_path: Some(data.join("permissions.toml")),
+        journal_path: Some(data.join("journal.jsonl")),
+        addresses_path: Some(data.join("addresses.json")),
+        secrets,
+        guard: config.guard.policy()?,
+        ..HubOptions::default()
+    })
+}
+
 async fn serve(config: Config, boot: Instant) -> anyhow::Result<()> {
     // Before anything opens the data directory.
     demo_fresh(&config)?;
@@ -314,16 +332,8 @@ async fn serve(config: Config, boot: Instant) -> anyhow::Result<()> {
     if secrets.is_none() {
         tracing::warn!("no master key: drivers cannot persist pairing credentials");
     }
-    let hub = Hub::new(HubOptions {
-        labels_path: Some(config.server.data_dir.join("labels.toml")),
-        state_path: Some(config.server.data_dir.join("state.json")),
-        journal_path: Some(config.server.data_dir.join("journal.jsonl")),
-        addresses_path: Some(config.server.data_dir.join("addresses.json")),
-        secrets,
-        guard: config.guard.policy()?,
-        ..HubOptions::default()
-    })
-    .context("cannot open the data directory (labels, journal, secrets)")?;
+    let hub = Hub::new(hub_options(&config, secrets)?)
+        .context("cannot open the data directory (labels, journal, secrets)")?;
     let cancel = CancellationToken::new();
 
     // History first: it must be listening before drivers publish anything.
@@ -863,8 +873,12 @@ const KINDS: &[&str] = &[
     "philips",
     "frigate",
     "bambu",
+    "cast",
     "esphome",
     "alexa",
+    "tado",
+    "netatmo",
+    "tahoma",
     "sonos",
     "reolink",
     "tuya",
@@ -1013,10 +1027,22 @@ fn build_driver(
         "bambu" => Arc::new(moli_bambu::Bambu::new(
             config.options.clone().try_into().with_context(context)?,
         )),
+        "cast" => Arc::new(moli_cast::Cast::new(
+            config.options.clone().try_into().with_context(context)?,
+        )),
         "esphome" => Arc::new(moli_esphome::Esphome::new(
             config.options.clone().try_into().with_context(context)?,
         )),
         "alexa" => Arc::new(moli_alexa::Alexa::new(
+            config.options.clone().try_into().with_context(context)?,
+        )),
+        "tado" => Arc::new(moli_tado::Tado::new(
+            config.options.clone().try_into().with_context(context)?,
+        )),
+        "netatmo" => Arc::new(moli_netatmo::Netatmo::new(
+            config.options.clone().try_into().with_context(context)?,
+        )),
+        "tahoma" => Arc::new(moli_tahoma::Tahoma::new(
             config.options.clone().try_into().with_context(context)?,
         )),
         "moonraker" => Arc::new(moli_moonraker::Moonraker::new(

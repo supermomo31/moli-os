@@ -1205,6 +1205,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "moli-cast"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "moli-androidtv",
+ "moli-core",
+ "moli-i18n",
+ "moli-net",
+ "moli-runtime",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "moli-core"
 version = "0.1.0"
 dependencies = [
@@ -1252,6 +1267,7 @@ name = "moli-esphome"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "moli-androidtv",
  "moli-audio",
  "moli-core",
  "moli-i18n",
@@ -1434,6 +1450,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "moli-netatmo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "http",
+ "http-body-util",
+ "moli-core",
+ "moli-i18n",
+ "moli-net",
+ "moli-runtime",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "moli-os"
 version = "0.1.0"
 dependencies = [
@@ -1447,6 +1480,7 @@ dependencies = [
  "moli-assistant",
  "moli-automation",
  "moli-bambu",
+ "moli-cast",
  "moli-core",
  "moli-demo",
  "moli-energy",
@@ -1462,6 +1496,7 @@ dependencies = [
  "moli-lights",
  "moli-moonraker",
  "moli-net",
+ "moli-netatmo",
  "moli-philips",
  "moli-phones",
  "moli-presence",
@@ -1469,6 +1504,8 @@ dependencies = [
  "moli-reolink",
  "moli-runtime",
  "moli-sonos",
+ "moli-tado",
+ "moli-tahoma",
  "moli-tapo",
  "moli-telegram",
  "moli-tuya",
@@ -1599,6 +1636,40 @@ name = "moli-sonos"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "moli-core",
+ "moli-i18n",
+ "moli-net",
+ "moli-runtime",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "moli-tado"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "http",
+ "http-body-util",
+ "moli-core",
+ "moli-i18n",
+ "moli-net",
+ "moli-runtime",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "moli-tahoma"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "http",
+ "http-body-util",
  "moli-core",
  "moli-i18n",
  "moli-net",
