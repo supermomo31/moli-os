@@ -3,6 +3,7 @@
   import { home, hub, value, isOn, nameOf, deviceKind, doorOpen, act } from '../lib/home.svelte.js';
   import { energy, useEnergy, euros, kwh, watts, power, liveLook, billOf } from '../lib/energy-live.svelte.js';
   import { offPeak, nextChange, clockText, minutesText, windowText, baseload, typicalDay, todayByHour, prices, advise } from '../lib/energy-advice.js';
+  import { elecGrid } from '../lib/energy-series.js';
   import { t } from '../../lib/i18n.svelte.js';
   import Icon from '../ui/Icon.svelte';
   import EnergyChart from '../ui/EnergyChart.svelte';
@@ -145,7 +146,7 @@
   // This month, the share billed off-peak.
   const offShare = $derived.by(() => {
     if (gasOnly) return null; // gas has no peak/off-peak periods
-    const grid = (s?.meters ?? []).filter((m) => m.role === 'grid');
+    const grid = elecGrid(s?.meters ?? []);
     const of = (re) => grid.filter((m) => re.test(m.id + m.name)).reduce((t, m) => t + (s.month.meters[m.id]?.kwh ?? 0), 0);
     const off = of(/hc|creuse/i);
     const all = grid.reduce((t, m) => t + (s.month.meters[m.id]?.kwh ?? 0), 0);

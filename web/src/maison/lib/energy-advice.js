@@ -4,6 +4,7 @@
 // feeds them what it has, in the browser's (the house's) time zone.
 
 import { t, locale } from '../../lib/i18n.svelte.js';
+import { elecGrid } from './energy-series.js';
 
 const DAY = 24 * 60;
 const minuteOf = (ts) => {
@@ -99,7 +100,7 @@ export function baseload(report) {
 /** A typical day: average kWh for each hour (0 → 23), whole house. */
 export function typicalDay(report) {
   const meter = report?.meters.find((m) => m.role === 'total');
-  const grid = report?.meters.filter((m) => m.role === 'grid') ?? [];
+  const grid = elecGrid(report?.meters ?? []);
   if (!meter && !grid.length) return null;
   const sum = new Array(24).fill(0);
   const n = new Array(24).fill(0);
@@ -118,7 +119,7 @@ export function typicalDay(report) {
  *  same hourly report as the typical day. */
 export function todayByHour(report, now = Date.now()) {
   const meter = report?.meters.find((m) => m.role === 'total');
-  const grid = report?.meters.filter((m) => m.role === 'grid') ?? [];
+  const grid = elecGrid(report?.meters ?? []);
   if (!meter && !grid.length) return null;
   const midnight = new Date(now);
   midnight.setHours(0, 0, 0, 0);

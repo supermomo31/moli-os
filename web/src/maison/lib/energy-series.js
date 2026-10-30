@@ -9,10 +9,20 @@ import { t } from '../../lib/i18n.svelte.js';
 const PALETTE = ['#e9a23b', '#5b8def', '#3fae7c', '#c46ad8', '#e0705a', '#2fb3b8', '#8c7ae6', '#d4a373'];
 const LIGHTS = '#f2c94c';
 
+/** Grid meters that measure electricity: all of them, when none is marked
+ *  another fuel. A gas meter's day-lump (all its kWh in hour 0) must not
+ *  feed the hourly electric shapes nor the electric total. */
+export function elecGrid(meters) {
+  const grid = meters.filter((m) => m.role === 'grid');
+  const elec = grid.filter((m) => m.fuel !== 'gas');
+  return elec.length ? elec : grid;
+}
+
 /** The parts, each with `kwh(bucket)` and `cost(bucket)` (that hour's price). */
 export function deviceSeries(meters) {
   const whole = meters.find((m) => m.role === 'total');
-  const grid = meters.filter((m) => m.role === 'grid');
+  const grid = elecGrid(meters);
+  const gridGas = meters.filter((m) => m.role === 'grid' && m.fuel === 'gas' && !grid.includes(m));
   const circuits = meters.filter((m) => m.role === 'circuit');
   const appliances = meters.filter((m) => m.role === 'appliance');
   const lights = appliances.filter((a) => a.estimated);
@@ -33,6 +43,8 @@ export function deviceSeries(meters) {
     const others = [...parts];
     parts.push({ id: '__rest', name: t('energie.reste'), rest: true, color: 'var(--surface-3)', kwh: (b) => Math.max(0, top(b) - others.reduce((t, p) => t + p.kwh(b), 0)) });
   }
+  // A non-electric fuel keeps its own bar and its own price, out of « reste ».
+  for (const g of gridGas) parts.push({ id: g.id, name: g.name, color: PALETTE[n++ % PALETTE.length], ownCost: true, kwh: (b) => k(b, g.id) });
   // Each part at that bucket's price (what the house paid per kWh then).
   const price = (b) => {
     const t = top?.(b);
@@ -41,6 +53,7 @@ export function deviceSeries(meters) {
   };
   for (const p of parts) {
     p.cost = (b) => {
+      if (p.ownCost) return b.meters[p.id]?.cost ?? null;
       const pr = price(b);
       return pr == null ? null : p.kwh(b) * pr;
     };

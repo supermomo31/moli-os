@@ -83,6 +83,22 @@ Les compteurs cumulés deviennent des **kWh et des euros heure par heure**, gard
   icône, pas de jauge direct ni d'analyse horaire ni de répartition par
   appareil, historique par jour (ces écrans n'auraient rien à montrer d'un
   relevé quotidien).
+- **Linky (électricité, par heure)** : l'API d'Enedis pour les particuliers est
+  Data Connect, atteinte ici via la passerelle **MyElectricalData** : le
+  titulaire consent une fois sur leur site (ça active aussi la « collecte
+  horaire » chez Enedis, qui peut mettre des jours à démarrer) et reçoit un
+  jeton valable jusqu'à trois ans. `tools/enedis/enedis-export.py` —
+  `ENEDIS_TOKEN` et `ENEDIS_PDL` en variables d'environnement, jamais dans un
+  fichier — sort les kWh de chaque **heure** (la courbe de charge 30 min
+  sommée, 7 jours par appel, borne d'Enedis), à donner à `energy import` en
+  tâche planifiée (J-1 ou J-2, rien de temps réel). `--granularity daily`
+  (kWh par jour, années entières par appel) sert au backfill : chaque jour
+  tombe dans sa première heure, donc **jamais de daily sur un jour que
+  l'horaire couvrira** — double comptage ; `--until N` arrête le backfill N
+  jours avant aujourd'hui, pile avant la fenêtre `--days` de la tâche
+  quotidienne. Un 5xx Enedis (plage sans données ou faute transitoire) saute
+  le morceau, un 401/429 arrête. Le compteur se déclare `role = "grid"` avec
+  `price` et un `point` jamais publié (`import:elec/index`).
 - Surfaces : `/api/energy` (en direct, aujourd'hui, hier, mois + projection, mois dernier,
   part non mesurée), `/api/energy/series?step=hour|day|month`, outil MCP `energy`, page
   Énergie, carte Accueil ; la ligne « Électricité en direct » du prompt de Moli.

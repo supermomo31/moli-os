@@ -323,7 +323,11 @@ function addHypotheticalWater(hours, loads) {
 export function buildData(report, { now = Date.now(), buyPrice = DEFAULTS.buyPrice, hypothetical = true } = {}) {
   const meters = report?.meters ?? [];
   const total = meters.find((m) => m.role === 'total');
-  const grid = meters.filter((m) => m.role === 'grid');
+  // The electric load only: a gas meter's day-lump must not feed the
+  // simulated hourly profile (all grid meters when none is marked gas).
+  const allGrid = meters.filter((m) => m.role === 'grid');
+  const elec = allGrid.filter((m) => m.fuel !== 'gas');
+  const grid = elec.length ? elec : allGrid;
   const clock = localClock(report?.timezone);
   const loads = findLoads(meters);
   const hours = [];
