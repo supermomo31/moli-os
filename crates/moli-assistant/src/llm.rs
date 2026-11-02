@@ -303,11 +303,13 @@ impl Endpoint {
                 LISTEN_LIMIT,
             )
             .await?;
-        Ok(answer["text"]
+        let raw = answer["text"]
             .as_str()
             .unwrap_or_default()
-            .trim()
-            .to_owned())
+            .trim();
+        // Noise bursts often make cloud STT hallucinate a word in Cyrillic/CJK.
+        let has_latin = raw.chars().any(|c| c.is_ascii_alphanumeric() || ('\u{00C0}'..='\u{024F}').contains(&c));
+        Ok(if has_latin { raw.to_owned() } else { String::new() })
     }
 }
 

@@ -1,6 +1,6 @@
 # Onboarding : caméras Netatmo
 
-1. Sur <https://dev.netatmo.com/apps/>, créer une application personnelle (ou ouvrir celle existante), puis dans « Token Generator » cocher les portées `read_camera`, `write_camera`, `access_camera`, `read_presence`, `write_presence`, `access_presence` et générer un jeton.
+1. Sur <https://dev.netatmo.com/apps/>, créer une application personnelle (ou ouvrir celle existante), puis générer un jeton OAuth avec les portées `read_camera`, `write_camera`, `access_camera`, `read_presence`, `write_presence`, `access_presence`, `read_camerapro`, `write_camerapro`, `access_camerapro`, `read_doorbell`, `access_doorbell`.
 2. Déclarer `[[driver]]` avec `id = "netatmo"`, `kind = "netatmo"` dans `data/moli.toml`.
 3. Enregistrer les 3 secrets dans le coffre chiffré par un tube (jamais en clair) :
    - `read -rs V; printf %s "$V" | docker compose exec -T moli-os /moli-os secrets set netatmo client_id; unset V`

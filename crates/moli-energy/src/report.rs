@@ -6,7 +6,7 @@ use jiff::tz::TimeZone;
 use jiff::{Timestamp, ToSpan as _, Zoned};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Config, Role};
+use crate::config::{Config, Fuel, Role};
 use crate::meter::HOUR_MS;
 use crate::store::{EnergyError, HourRow};
 
@@ -183,11 +183,11 @@ impl Period {
                 .or_default()
                 .add(row.kwh, row.cost);
         }
-        let of_role = |role: Role| {
+        let sum_where = |pred: fn(&crate::config::MeterConfig) -> bool| {
             let ids: Vec<&str> = config
                 .meters
                 .iter()
-                .filter(|m| m.role == role)
+                .filter(|m| pred(m))
                 .map(|m| m.id.as_str())
                 .collect();
             (!ids.is_empty()).then(|| {
@@ -198,10 +198,11 @@ impl Period {
                 )
             })
         };
-        let (grid, whole, circuits) = (
-            of_role(Role::Grid),
-            of_role(Role::Total),
-            of_role(Role::Circuit),
+        let (elec_grid, gas_grid, whole, circuits) = (
+            sum_where(|m| m.role == Role::Grid && m.fuel == Fuel::Electricity),
+            sum_where(|m| m.role == Role::Grid && m.fuel == Fuel::Gas),
+            sum_where(|m| m.role == Role::Total),
+            sum_where(|m| m.role == Role::Circuit),
         );
         let unmeasured = match (&whole, &circuits) {
             (Some(w), Some(c)) => Some(Amount {
@@ -210,14 +211,20 @@ impl Period {
             }),
             _ => None,
         };
-        // Both measure the same home; the lower one is missing data (the
-        // Linky lags by up to a whole kWh, the clamp has no old history).
-        let total = match (grid, whole) {
+        // Both measure the same electric home; the lower one is missing data
+        // (the Linky lags by up to a whole kWh, the clamp has no old history).
+        let elec = match (elec_grid, whole) {
             (Some(g), Some(w)) => Some(if w.kwh > g.kwh { w } else { g }),
             (g, w) => g.or(w),
         }
-        .or(circuits)
-        .unwrap_or_default();
+        .or(circuits);
+        let total = match (elec, gas_grid) {
+            (Some(mut e), Some(gas)) => {
+                e.add(gas.kwh, gas.cost);
+                e
+            }
+            (e, g) => e.or(g).unwrap_or_default(),
+        };
         Self {
             from,
             to,

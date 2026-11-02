@@ -115,6 +115,8 @@ impl Power {
 pub struct Heard {
     /// The audio scored so far.
     pub length: Duration,
+    /// Total duration of voiced frames after warm-up.
+    pub voiced: Duration,
     /// When the sentence was found to start.
     pub speech_at: Option<Duration>,
     /// The highest frame score, 0 to 1.
@@ -189,6 +191,9 @@ impl Vad {
                 self.heard.quiet.add(frame);
             }
             let warm = self.heard.length > WARM_UP;
+            if voice && warm {
+                self.heard.voiced += FRAME;
+            }
             if let Some(found) = self.timing.push(voice && warm, FRAME) {
                 if found == Edge::Start {
                     self.heard.speech_at = Some(self.heard.length);
@@ -203,6 +208,12 @@ impl Vad {
     #[must_use]
     pub fn heard(&self) -> Heard {
         self.heard
+    }
+
+    /// Discards a false start so the listener can keep waiting for the real sentence.
+    pub fn reset_utterance(&mut self) {
+        self.heard.voiced = Duration::ZERO;
+        self.heard.speech_at = None;
     }
 }
 

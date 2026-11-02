@@ -79,6 +79,7 @@ struct TokenPair {
 pub enum CameraKind {
     Presence,
     Welcome,
+    Advance,
     Doorbell,
 }
 
@@ -87,6 +88,7 @@ impl CameraKind {
         match kind {
             "NOC" => Some(Self::Presence),
             "NACamera" => Some(Self::Welcome),
+            "NPC" => Some(Self::Advance),
             "NDB" => Some(Self::Doorbell),
             _ => None,
         }
@@ -96,6 +98,7 @@ impl CameraKind {
         match self {
             Self::Presence => "Presence",
             Self::Welcome => "Welcome",
+            Self::Advance => "Advance",
             Self::Doorbell => "Doorbell",
         }
     }

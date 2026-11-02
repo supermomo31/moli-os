@@ -325,9 +325,7 @@ export function buildData(report, { now = Date.now(), buyPrice = DEFAULTS.buyPri
   const total = meters.find((m) => m.role === 'total');
   // The electric load only: a gas meter's day-lump must not feed the
   // simulated hourly profile (all grid meters when none is marked gas).
-  const allGrid = meters.filter((m) => m.role === 'grid');
-  const elec = allGrid.filter((m) => m.fuel !== 'gas');
-  const grid = elec.length ? elec : allGrid;
+  const grid = meters.filter((m) => m.role === 'grid' && m.fuel !== 'gas');
   const clock = localClock(report?.timezone);
   const loads = findLoads(meters);
   const hours = [];

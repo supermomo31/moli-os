@@ -27,7 +27,11 @@ const MAX_UTTERANCE: Duration = Duration::from_secs(20);
 /// people talk, the detector always hears a voice and the silence that ends
 /// a sentence never comes (11 Oct. 2026: guests, « éteins la cuisine » heard
 /// for 15 s). A request is a few seconds.
-const MAX_SENTENCE: Duration = Duration::from_secs(6);
+const MAX_SENTENCE: Duration = Duration::from_secs(12);
+/// The first 450 ms carry the device's 0 dBFS wake chime; after that, far-field
+/// microphone audio (~-30 dBFS) is lifted by 5× (+14 dB) for VAD and STT.
+const WAKE_MUTE: Duration = Duration::from_millis(450);
+const MIC_GAIN: i16 = 5;
 /// After an answer has played, the device asks to listen again at once:
 /// not within this, the conversation is over.
 const CONTINUE_WAIT: Duration = Duration::from_secs(5);
@@ -205,9 +209,18 @@ impl Voice {
         let Some(run) = self.run.as_mut().filter(|r| !r.ended) else {
             return Ok(());
         };
-        run.pcm.extend_from_slice(pcm);
-        run.length += vad::length(pcm);
-        let edge = run.vad.push(pcm);
+        let cleaned: Vec<u8> = if run.length < WAKE_MUTE {
+            vec![0u8; pcm.len() & !1]
+        } else {
+            pcm.as_chunks::<2>()
+                .0
+                .iter()
+                .flat_map(|b| i16::from_le_bytes(*b).saturating_mul(MIC_GAIN).to_le_bytes())
+                .collect()
+        };
+        run.pcm.extend_from_slice(&cleaned);
+        run.length += vad::length(&cleaned);
+        let edge = run.vad.push(&cleaned);
         if edge == Some(Edge::Start) {
             run.speech_by = None;
             Self::event(tx, VoiceEvent::SttVadStart, &[]).await?;
@@ -434,12 +447,25 @@ impl Voice {
         let now = Instant::now();
         if let Some(run) = self
             .run
-            .as_ref()
-            .filter(|r| r.speech_by.is_some_and(|by| now >= by))
+            .as_mut()
+            .filter(|r| !r.ended && r.speech_by.is_some_and(|by| now >= by))
         {
+            if run.vad.heard().best >= 0.65
+                && let Some(brain) = ctx.voice_brain()
+            {
+                run.log(ctx, "window");
+                run.ended = true;
+                run.speech_by = None;
+                let wav = sound::wav(&std::mem::take(&mut run.pcm), RATE);
+                Self::event(tx, VoiceEvent::SttVadEnd, &[]).await?;
+                Self::state(ctx, id, "thinking");
+                self.think(brain, wav);
+                return Ok(());
+            }
             run.log(ctx, "no voice");
+            let wav = sound::wav(&run.pcm, RATE);
             if let Some(brain) = ctx.voice_brain() {
-                brain.heard_nothing(Some(sound::wav(&run.pcm, RATE)));
+                brain.heard_nothing(Some(wav));
             }
             return self.end(ctx, id, tx, true).await;
         }

@@ -9,13 +9,9 @@ import { t } from '../../lib/i18n.svelte.js';
 const PALETTE = ['#e9a23b', '#5b8def', '#3fae7c', '#c46ad8', '#e0705a', '#2fb3b8', '#8c7ae6', '#d4a373'];
 const LIGHTS = '#f2c94c';
 
-/** Grid meters that measure electricity: all of them, when none is marked
- *  another fuel. A gas meter's day-lump (all its kWh in hour 0) must not
- *  feed the hourly electric shapes nor the electric total. */
+/** Grid meters that measure electricity (never gas). */
 export function elecGrid(meters) {
-  const grid = meters.filter((m) => m.role === 'grid');
-  const elec = grid.filter((m) => m.fuel !== 'gas');
-  return elec.length ? elec : grid;
+  return meters.filter((m) => m.role === 'grid' && m.fuel !== 'gas');
 }
 
 /** The parts, each with `kwh(bucket)` and `cost(bucket)` (that hour's price). */
