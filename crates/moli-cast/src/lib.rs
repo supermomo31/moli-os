@@ -77,6 +77,7 @@ fn point(
     }
 }
 
+#[allow(clippy::too_many_lines)] // one entry per point
 fn device(config: &Config, ctx: &DriverCtx, id: &DeviceId) -> Device {
     let name = config
         .name
@@ -153,6 +154,30 @@ fn device(config: &Config, ctx: &DriverCtx, id: &DeviceId) -> Device {
                 Semantic::Other,
             ),
             point(
+                "image",
+                &moli_i18n::tr!("pilotes.cast.pochette"),
+                Kind::Text,
+                false,
+                None,
+                Semantic::Other,
+            ),
+            point(
+                "next",
+                &moli_i18n::tr!("pilotes.cast.suivant"),
+                Kind::Binary,
+                true,
+                None,
+                Semantic::Other,
+            ),
+            point(
+                "previous",
+                &moli_i18n::tr!("pilotes.cast.precedent"),
+                Kind::Binary,
+                true,
+                None,
+                Semantic::Other,
+            ),
+            point(
                 "say",
                 &moli_i18n::tr!("pilotes.cast.dire"),
                 Kind::Text,
@@ -168,6 +193,14 @@ fn device(config: &Config, ctx: &DriverCtx, id: &DeviceId) -> Device {
                 None,
                 Semantic::Other,
             ),
+            point(
+                "play",
+                &moli_i18n::tr!("pilotes.cast.jouer"),
+                Kind::Text,
+                true,
+                None,
+                Semantic::Other,
+            ),
         ],
     }
 }
@@ -178,22 +211,29 @@ async fn run(config: &Config, ctx: &mut DriverCtx) -> anyhow::Result<()> {
     ctx.set_availability(&id, false);
     ctx.ready();
 
+    let identity_pin = ctx.secret("cast_device_pin");
     let pin = ctx.secret(CAST_PIN);
-    let mut pinned = pin.is_some();
     let tls = PinnedTls::new(pin)?;
+    let identity_pin = if let Some(pin) = identity_pin {
+        pin
+    } else {
+        let identity = cast::enroll_device_port(&tls, &config.host, config.port).await?;
+        ctx.store_secret("cast_device_pin", &identity).await?;
+        identity
+    };
     let (orders_tx, mut orders_rx) = mpsc::channel::<Order>(16);
     let (events_tx, mut events_rx) = mpsc::channel::<Event>(32);
 
     let host = config.host.clone();
     let port = config.port;
-    let session_tls = tls.clone();
     let worker = tokio::spawn(async move {
         let mut pause = RETRY_MIN;
         let mut last_error: Option<String> = None;
         loop {
             let started = Instant::now();
             let result =
-                cast::session_port(&session_tls, &host, port, &mut orders_rx, &events_tx).await;
+                cast::session_device_port(&host, port, &identity_pin, &mut orders_rx, &events_tx)
+                    .await;
             if events_tx.is_closed() || result.is_ok() {
                 return;
             }
@@ -227,12 +267,6 @@ async fn run(config: &Config, ctx: &mut DriverCtx) -> anyhow::Result<()> {
                             online = true;
                             ctx.set_availability(&id, true);
                         }
-                        if !pinned
-                            && let Some(seen) = tls.pinned_fingerprint()
-                            && ctx.store_secret(CAST_PIN, &seen).await.is_ok()
-                        {
-                            pinned = true;
-                        }
                         publish_state(ctx, &id, &playing);
                     }
                     Event::Lost => {
@@ -251,7 +285,8 @@ async fn run(config: &Config, ctx: &mut DriverCtx) -> anyhow::Result<()> {
                     online,
                     config.media_base.as_deref(),
                     &command,
-                );
+                )
+                .await;
                 command.reply(result);
             }
         }
@@ -286,9 +321,16 @@ fn publish_state(ctx: &DriverCtx, id: &DeviceId, p: &Playing) {
             .as_deref()
             .map_or(Value::Null, |s| Value::Text(s.into())),
     );
+    ctx.set_state(
+        id,
+        "image",
+        p.image
+            .as_deref()
+            .map_or(Value::Null, |s| Value::Text(s.into())),
+    );
 }
 
-fn handle_command(
+async fn handle_command(
     ctx: &DriverCtx,
     orders: &mpsc::Sender<Order>,
     online: bool,
@@ -301,6 +343,8 @@ fn handle_command(
     let order = match (&*command.key, &command.value) {
         ("playing", Value::Bool(true)) => Order::Play,
         ("playing", Value::Bool(false)) => Order::Pause,
+        ("next", _) => Order::Next,
+        ("previous", _) => Order::Previous,
         ("volume", Value::Float(v)) => Order::Volume((*v / 100.0).clamp(0.0, 1.0)),
         ("volume", Value::Int(v)) => {
             #[allow(clippy::cast_precision_loss)]
@@ -322,6 +366,24 @@ fn handle_command(
                 url,
                 mime: "audio/flac".into(),
             }
+        }
+        ("play", Value::Text(phrase)) => {
+            let music = ctx
+                .music()
+                .ok_or_else(|| moli_i18n::tr!("pilotes.cast.sans_musique"))?;
+            let items = music
+                .resolve(phrase.trim())
+                .await?
+                .iter()
+                .map(|t| cast::Queued {
+                    url: t.url.clone(),
+                    mime: t.mime.clone(),
+                    title: Some(t.title.clone()),
+                    artist: Some(t.artist.clone()),
+                    image: t.image.clone(),
+                })
+                .collect();
+            Order::Queue { items }
         }
         (point, _) => {
             return Err(moli_i18n::tr!("pilotes.cast.lecture_seule", point = point));

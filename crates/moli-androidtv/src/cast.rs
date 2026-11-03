@@ -61,11 +61,24 @@ pub enum Event {
     Lost,
 }
 
+/// One queue item the default media receiver plays.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Queued {
+    pub url: String,
+    pub mime: String,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    /// A picture (public address), for screens that show one.
+    pub image: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Order {
     Play,
     Pause,
     Stop,
+    Next,
+    Previous,
     /// Receiver volume, `0.0..=1.0`.
     Volume(f64),
     Mute(bool),
@@ -73,6 +86,11 @@ pub enum Order {
     Load {
         url: String,
         mime: String,
+    },
+    /// The same, with a queue of tracks (music): the first plays, the rest
+    /// follows on its own.
+    Queue {
+        items: Vec<Queued>,
     },
 }
 
@@ -104,7 +122,64 @@ pub async fn session_port(
     orders: &mut mpsc::Receiver<Order>,
     events: &mpsc::Sender<Event>,
 ) -> anyhow::Result<()> {
-    let stream = tls.connect(host, port).await.context("cast")?;
+    session_port_inner(tls, host, port, None, orders, events).await
+}
+
+pub async fn enroll_device_port(tls: &PinnedTls, host: &str, port: u16) -> anyhow::Result<String> {
+    let mut stream = tls.connect(host, port).await.context("cast enrollment")?;
+    let cert = stream
+        .get_ref()
+        .1
+        .peer_certificates()
+        .and_then(|chain| chain.first())
+        .context("missing Cast TLS certificate")?
+        .as_ref()
+        .to_vec();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        authenticate(&mut stream, None, &cert),
+    )
+    .await
+    .context("Cast enrollment timeout")?
+}
+
+pub async fn session_device_port(
+    host: &str,
+    port: u16,
+    identity_pin: &str,
+    orders: &mut mpsc::Receiver<Order>,
+    events: &mpsc::Sender<Event>,
+) -> anyhow::Result<()> {
+    let tls = PinnedTls::new(None)?;
+    session_port_inner(&tls, host, port, Some(identity_pin), orders, events).await
+}
+
+#[allow(clippy::too_many_lines)]
+async fn session_port_inner(
+    tls: &PinnedTls,
+    host: &str,
+    port: u16,
+    identity_pin: Option<&str>,
+    orders: &mut mpsc::Receiver<Order>,
+    events: &mpsc::Sender<Event>,
+) -> anyhow::Result<()> {
+    let mut stream = tls.connect(host, port).await.context("cast")?;
+    if let Some(pin) = identity_pin {
+        let cert = stream
+            .get_ref()
+            .1
+            .peer_certificates()
+            .and_then(|chain| chain.first())
+            .context("missing Cast TLS certificate")?
+            .as_ref()
+            .to_vec();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            authenticate(&mut stream, Some(pin), &cert),
+        )
+        .await
+        .context("Cast authentication timeout")??;
+    }
     // An order given while the device was away is not run now, late.
     while orders.try_recv().is_ok() {}
     let (mut read, mut write) = tokio::io::split(stream);
@@ -119,7 +194,7 @@ pub async fn session_port(
     let result: anyhow::Result<()> = async {
         let mut follow = Follow::default();
         let mut told: Option<Playing> = None;
-        let mut pending_load: Option<(String, String)> = None;
+        let mut pending_load: Option<Pending> = None;
         let mut request = 1u64;
         send(&mut write, RECEIVER, NS_CONNECTION, &json!({ "type": "CONNECT" })).await?;
         send(&mut write, RECEIVER, NS_RECEIVER, &json!({ "type": "GET_STATUS", "requestId": request })).await?;
@@ -152,10 +227,10 @@ pub async fn session_port(
                             }
                             if follow.app_id.as_deref() == Some(DEFAULT_MEDIA_RECEIVER)
                                 && let Some(transport) = follow.transport.clone()
-                                && let Some((url, mime)) = pending_load.take()
+                                && let Some(load) = pending_load.take()
                             {
                                 request += 1;
-                                send(&mut write, &transport, NS_MEDIA, &load_body(request, &url, &mime)).await?;
+                                send(&mut write, &transport, NS_MEDIA, &load.body(request)).await?;
                             }
                         }
                         (NS_MEDIA, Some("MEDIA_STATUS")) => follow.media(&body),
@@ -188,6 +263,15 @@ pub async fn session_port(
                             };
                             send(&mut write, &transport, NS_MEDIA, &json!({ "type": kind, "mediaSessionId": session, "requestId": request })).await?;
                         }
+                        Order::Next | Order::Previous => {
+                            let (Some(transport), Some(session)) = (follow.transport.clone(), follow.session) else {
+                                tracing::debug!("cast: nothing to control");
+                                continue;
+                            };
+                            request += 1;
+                            let jump = if matches!(order, Order::Next) { 1 } else { -1 };
+                            send(&mut write, &transport, NS_MEDIA, &json!({ "type": "QUEUE_UPDATE", "mediaSessionId": session, "jump": jump, "requestId": request })).await?;
+                        }
                         Order::Volume(level) => {
                             request += 1;
                             let level = level.clamp(0.0, 1.0);
@@ -204,7 +288,22 @@ pub async fn session_port(
                                 request += 1;
                                 send(&mut write, &transport, NS_MEDIA, &load_body(request, &url, &mime)).await?;
                             } else {
-                                pending_load = Some((url, mime));
+                                pending_load = Some(Pending::One(url, mime));
+                                request += 1;
+                                send(&mut write, RECEIVER, NS_RECEIVER, &json!({ "type": "LAUNCH", "appId": DEFAULT_MEDIA_RECEIVER, "requestId": request })).await?;
+                            }
+                        }
+                        Order::Queue { items } => {
+                            if items.is_empty() {
+                                continue;
+                            }
+                            if follow.app_id.as_deref() == Some(DEFAULT_MEDIA_RECEIVER)
+                                && let Some(transport) = follow.transport.clone()
+                            {
+                                request += 1;
+                                send(&mut write, &transport, NS_MEDIA, &queue_body(request, &items)).await?;
+                            } else {
+                                pending_load = Some(Pending::Queue(items));
                                 request += 1;
                                 send(&mut write, RECEIVER, NS_RECEIVER, &json!({ "type": "LAUNCH", "appId": DEFAULT_MEDIA_RECEIVER, "requestId": request })).await?;
                             }
@@ -349,6 +448,50 @@ fn load_body(request: u64, url: &str, mime: &str) -> Json {
     })
 }
 
+/// What to load once the default media receiver is up.
+enum Pending {
+    One(String, String),
+    Queue(Vec<Queued>),
+}
+
+impl Pending {
+    fn body(self, request: u64) -> Json {
+        match self {
+            Self::One(url, mime) => load_body(request, &url, &mime),
+            Self::Queue(items) => queue_body(request, &items),
+        }
+    }
+}
+
+/// A `QUEUE_LOAD` message: the receiver plays `items` in order by itself.
+fn queue_body(request: u64, items: &[Queued]) -> Json {
+    let items: Vec<Json> = items
+        .iter()
+        .map(|t| {
+            json!({
+                "media": {
+                    "contentId": t.url,
+                    "contentType": t.mime,
+                    "streamType": "BUFFERED",
+                    "metadata": {
+                        "metadataType": 3,
+                        "title": t.title,
+                        "artist": t.artist,
+                        "images": t.image.as_ref().map(|u| vec![json!({"url": u})]).unwrap_or_default(),
+                    },
+                },
+            })
+        })
+        .collect();
+    json!({
+        "type": "QUEUE_LOAD",
+        "requestId": request,
+        "items": items,
+        "startIndex": 0,
+        "repeatMode": "REPEAT_OFF",
+    })
+}
+
 impl Follow {
     /// The receiver's status: which app runs and the receiver's volume.
     /// Returns the app's transport when it is new (to connect to and ask).
@@ -451,6 +594,91 @@ impl Follow {
 }
 
 /// A message's sender, namespace and JSON payload.
+const NS_AUTH: &str = "urn:x-cast:com.google.cast.tp.deviceauth";
+
+async fn authenticate<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: &mut S,
+    pin: Option<&str>,
+    tls_cert: &[u8],
+) -> anyhow::Result<String> {
+    use ring::rand::{SecureRandom as _, SystemRandom};
+    let mut nonce = [0u8; 32];
+    SystemRandom::new()
+        .fill(&mut nonce)
+        .map_err(|_| anyhow::anyhow!("Cast nonce generation failed"))?;
+    let challenge = Writer::new()
+        .msg(1, Writer::new().uint(1, 1).bytes(2, &nonce).uint(3, 1))
+        .finish();
+    let message = Writer::new()
+        .uint(1, 0)
+        .str(2, "sender-0")
+        .str(3, RECEIVER)
+        .str(4, NS_AUTH)
+        .uint(5, 1)
+        .bytes(7, &challenge)
+        .finish();
+    stream
+        .write_all(&u32::try_from(message.len())?.to_be_bytes())
+        .await?;
+    stream.write_all(&message).await?;
+    stream.flush().await?;
+    let frame = read_frame(stream).await?;
+    let envelope = parse(&frame).context("invalid Cast authentication envelope")?;
+    if envelope.str(2) != Some(RECEIVER)
+        || envelope.str(3) != Some("sender-0")
+        || envelope.str(4) != Some(NS_AUTH)
+        || envelope.uint(5) != Some(1)
+    {
+        bail!("unexpected Cast authentication envelope");
+    }
+    let payload = envelope
+        .bytes(7)
+        .context("missing Cast authentication payload")?;
+    let auth = parse(payload).context("invalid Cast authentication response")?;
+    let response = parse(
+        auth.bytes(2)
+            .context("missing Cast authentication response")?,
+    )
+    .context("invalid Cast authentication fields")?;
+    let identity = moli_net::certificate_fingerprint(
+        response
+            .bytes(2)
+            .context("missing Cast device certificate")?,
+    );
+    verify_auth_response(payload, pin.unwrap_or(&identity), &nonce, tls_cert)?;
+    Ok(identity)
+}
+
+fn verify_auth_response(
+    payload: &[u8],
+    pin: &str,
+    nonce: &[u8],
+    tls_cert: &[u8],
+) -> anyhow::Result<()> {
+    let auth = parse(payload).context("invalid Cast authentication response")?;
+    if auth.bytes(3).is_some() {
+        bail!("Cast authentication rejected");
+    }
+    let response = parse(
+        auth.bytes(2)
+            .context("missing Cast authentication response")?,
+    )
+    .context("invalid Cast authentication fields")?;
+    if response.uint(4).unwrap_or(1) != 1
+        || response.uint(6) != Some(1)
+        || response.bytes(5) != Some(nonce)
+    {
+        bail!("Cast authentication requires SHA-256 and the current nonce");
+    }
+    let cert = response
+        .bytes(2)
+        .context("missing Cast device certificate")?;
+    let signature = response.bytes(1).context("missing Cast device signature")?;
+    let mut signed = nonce.to_vec();
+    signed.extend_from_slice(tls_cert);
+    moli_net::verify_cast_signature(cert, pin, &signed, signature)
+}
+
 fn envelope(frame: &[u8]) -> Option<(String, String, Json)> {
     let m = parse(frame)?;
     let body = serde_json::from_str(m.str(6)?).ok()?;
@@ -492,6 +720,50 @@ async fn read_frame<R: AsyncRead + Unpin>(read: &mut R) -> anyhow::Result<Vec<u8
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authentication_rejects_missing_response_and_receiver_errors() {
+        assert!(verify_auth_response(&[], "", b"nonce", b"tls").is_err());
+        let error = Writer::new().msg(3, Writer::new().uint(1, 0)).finish();
+        assert!(verify_auth_response(&error, "", b"nonce", b"tls").is_err());
+    }
+
+    #[test]
+    fn authentication_rejects_replay_and_algorithm_downgrade() {
+        for (nonce, hash, algorithm) in [(b"old".as_slice(), 1, 1), (b"new", 0, 1), (b"new", 1, 2)]
+        {
+            let response = Writer::new()
+                .msg(
+                    2,
+                    Writer::new()
+                        .bytes(1, b"signature")
+                        .bytes(2, b"certificate")
+                        .uint(4, algorithm)
+                        .bytes(5, nonce)
+                        .uint(6, hash),
+                )
+                .finish();
+            let error = verify_auth_response(&response, "", b"new", b"tls").unwrap_err();
+            assert!(error.to_string().contains("current nonce"));
+        }
+    }
+
+    #[test]
+    fn authentication_does_not_trust_a_different_device_certificate() {
+        let response = Writer::new()
+            .msg(
+                2,
+                Writer::new()
+                    .bytes(1, b"signature")
+                    .bytes(2, b"certificate")
+                    .uint(4, 1)
+                    .bytes(5, b"new")
+                    .uint(6, 1),
+            )
+            .finish();
+        let error = verify_auth_response(&response, &"0".repeat(64), b"new", b"tls").unwrap_err();
+        assert!(error.to_string().contains("identity does not match"));
+    }
 
     fn receiver(apps: &Json) -> Json {
         json!({ "type": "RECEIVER_STATUS", "status": { "applications": apps } })

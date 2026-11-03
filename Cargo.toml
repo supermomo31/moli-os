@@ -44,6 +44,7 @@ moli-androidtv = { path = "crates/moli-androidtv" }
 moli-cast = { path = "crates/moli-cast" }
 moli-esphome = { path = "crates/moli-esphome" }
 moli-alexa = { path = "crates/moli-alexa" }
+moli-qobuz = { path = "crates/moli-qobuz" }
 moli-tado = { path = "crates/moli-tado" }
 moli-netatmo = { path = "crates/moli-netatmo" }
 moli-tahoma = { path = "crates/moli-tahoma" }

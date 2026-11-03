@@ -25,6 +25,7 @@ moli-bambu.workspace = true
 moli-cast.workspace = true
 moli-esphome.workspace = true
 moli-alexa.workspace = true
+moli-qobuz.workspace = true
 moli-tado.workspace = true
 moli-netatmo.workspace = true
 moli-tahoma.workspace = true
