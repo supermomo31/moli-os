@@ -132,6 +132,9 @@ enum ProfileCommand {
 
 #[derive(Subcommand)]
 enum SecretsCommand {
+    /// List the names (`<instance>/<name>`) stored in the encrypted secret
+    /// store; values are never shown.
+    List,
     /// Forget one secret of a driver instance (revoked key, replaced bridge…).
     /// Restart moli-os afterwards.
     Forget { instance: String, name: String },
@@ -190,11 +193,27 @@ fn main() -> anyhow::Result<()> {
             println!("configuration OK ({} driver(s))", config.drivers.len());
             Ok(())
         }
-        Command::Secrets(SecretsCommand::Forget { instance, name }) => {
-            let key = master_key(&config.server.data_dir, false)?.context(
-                "no master key (MOLI_MASTER_KEY[_FILE], or master.key in the data directory)",
-            )?;
-            let path = config.server.data_dir.join("secrets.enc");
+        Command::Secrets(command) => secrets_command(&config, &command),
+        Command::Serve => tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(config.server.worker_threads)
+            .enable_all()
+            .build()?
+            .block_on(serve(config, boot)),
+    }
+}
+
+fn secrets_command(config: &Config, command: &SecretsCommand) -> anyhow::Result<()> {
+    let key = master_key(&config.server.data_dir, false)?
+        .context("no master key (MOLI_MASTER_KEY[_FILE], or master.key in the data directory)")?;
+    let path = config.server.data_dir.join("secrets.enc");
+    match command {
+        SecretsCommand::List => {
+            for name in moli_runtime::list_secrets(&path, &key)? {
+                println!("{name}");
+            }
+            Ok(())
+        }
+        SecretsCommand::Forget { instance, name } => {
             let existed = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?
@@ -209,7 +228,7 @@ fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
-        Command::Secrets(SecretsCommand::Set { instance, name }) => {
+        SecretsCommand::Set { instance, name } => {
             // Typed at a terminal, the value would echo on screen (and end
             // up in scrollback, recordings…): demand a pipe.
             if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
@@ -217,16 +236,12 @@ fn main() -> anyhow::Result<()> {
                     "pipe the value, never type it: read -rs V; printf %s \"$V\" | moli-os secrets set {instance} {name}"
                 );
             }
-            let key = master_key(&config.server.data_dir, false)?.context(
-                "no master key (MOLI_MASTER_KEY[_FILE], or master.key in the data directory)",
-            )?;
             let mut value = String::new();
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut value)?;
             let value = value.trim();
             if value.is_empty() {
                 bail!("empty value on standard input");
             }
-            let path = config.server.data_dir.join("secrets.enc");
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?
@@ -242,11 +257,6 @@ fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
-        Command::Serve => tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(config.server.worker_threads)
-            .enable_all()
-            .build()?
-            .block_on(serve(config, boot)),
     }
 }
 

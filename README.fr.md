@@ -29,9 +29,13 @@ historique : [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)) :
   écriture, le dernier état connu restauré avec son âge, un coffre chiffré pour les secrets, et
   une garde qui retient les ordres des agents dans les pièces protégées pour qu'une personne
   les valide.
-- **24 intégrations** (`integrations/`) : Zigbee2MQTT, Hue, Sonos, Tuya, Reolink, Frigate,
-  télés Philips, Bambu Lab, Klipper, Tapo, imprimantes IPP, box UPnP, présence, Telegram,
-  téléphones, et des profils déclaratifs (Daikin, Meross, Open-Meteo, Tempo, iopool…).
+- **32 intégrations** (`integrations/`) : Zigbee2MQTT (et ponts Matter vers MQTT), Hue,
+  Sonos, Google Cast, Amazon Echo (Alexa), Qobuz, satellites vocaux ESPHome, Tuya (local et
+  cloud), tado°, Somfy TaHoma (Overkiz), caméras Netatmo, Reolink, Frigate, télés Philips,
+  Bambu Lab, Klipper / Moonraker, Tapo, imprimantes IPP, box UPnP, hôte et ordinateurs,
+  présence Wi-Fi, aides de la maison, Telegram, téléphones, ainsi que des profils déclaratifs
+  (Daikin, Meross, météo et qualité de l'air Open-Meteo, Tempo, iopool) et les outils d'import
+  d'énergie (`tools/enedis` via MyElectricalData, `tools/grdf` via PyGazpar).
 - **Le tableau de bord** (Svelte 5), embarqué dans le binaire : pièces, lumières, climat,
   caméras, énergie, plan de la maison en 2D et en 3D.
 - **Moli, l'assistant** : conversation (texte ou voix) avec un modèle compatible OpenAI, qui agit
@@ -75,8 +79,12 @@ Il leur doit la connaissance des protocoles, des vérifications d'interopérabil
   installation existante.
 - tinytuya et localtuya : le protocole local Tuya ; trames vérifiées contre leur sortie.
 - python-kasa : la session KLAP de TP-Link, vérifiée contre sa sortie.
-- pydaikin, meross_lan / MerossIot, ha-bambulab, androidtvremote2 : documentation des protocoles.
-- Zigbee2MQTT, Frigate, Moonraker : leurs API documentées.
+- pydaikin, meross_lan / MerossIot, ha-bambulab, androidtvremote2, pychromecast, aioesphomeapi,
+  alexapy, pyoverkiz, python-tado : documentation des protocoles.
+- qobuz-dl et streamrip : signature et résolution des flux de l'interface du player web Qobuz.
+- PyGazpar et MyElectricalData : outils d'import d'historique d'énergie GRDF (Gazpar) et Enedis
+  (Linky Data Connect) (`tools/grdf`, `tools/enedis`).
+- Zigbee2MQTT, Frigate, Moonraker, Netatmo Connect : leurs API documentées.
 - Powercalc : profils de consommation mesurés des lampes (voir `NOTICE`).
 - Données météo : [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0).
 

@@ -18,11 +18,13 @@ Mesures sur une installation réelle, à côté de son Home Assistant (détail d
 | Échelle | 77 appareils (22 pilotes) | 171 appareils (1 591 entités) |
 
 Ce qui marche aujourd'hui :
-- 24 intégrations : Zigbee (Zigbee2MQTT), Hue, Tuya (local et cloud), Reolink, Sonos (et ses
-  annonces vocales), télé Philips, Frigate, Bambu (et son AMS), Klipper, Tapo, box UPnP,
-  imprimante IPP, l'hôte et les ordinateurs, la présence par Wi-Fi, les aides de la maison,
-  **Telegram** (votre bot, sans relais), les **téléphones** (appli Moli), et des profils
-  déclaratifs (Daikin, Meross, Open-Meteo, Tempo, iopool) ;
+- 32 intégrations : Zigbee (Zigbee2MQTT et ponts Matter vers MQTT), Hue, Tuya (local et cloud),
+  Reolink, caméras Netatmo, Sonos (et ses annonces vocales), Google Cast, Amazon Echo (Alexa),
+  Qobuz, satellites vocaux ESPHome, tado°, Somfy TaHoma (Overkiz), télé Philips, Frigate, Bambu
+  (et son AMS), Klipper / Moonraker, Tapo, box UPnP, imprimante IPP, l'hôte et les ordinateurs,
+  la présence par Wi-Fi, les aides de la maison, **Telegram** (votre bot, sans relais), les
+  **téléphones** (appli Moli), des profils déclaratifs (Daikin, Meross, Open-Meteo météo et air,
+  Tempo, iopool) et les imports d'énergie GRDF / Enedis (`tools/grdf`, `tools/enedis`) ;
 - la garde (pièces protégées, heures calmes), l'historique et l'énergie ;
 - le dashboard « Maison », avec des **filtres par type** et le **plan vivant** : la maison
   redessinée en données, en 2D zoomable à 4 habillages et en **3D** ;

@@ -76,6 +76,19 @@ impl fmt::Debug for MasterKey {
     }
 }
 
+/// Lists the names (`<instance>/<name>`) stored in the encrypted secret
+/// store, in alphabetical order. Values are never returned.
+pub fn list_secrets(path: &Path, key: &MasterKey) -> io::Result<Vec<String>> {
+    let store = SecretStore::open(path.to_path_buf(), &parse_master_key(&key.0)?)?;
+    Ok(store
+        .values
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .keys()
+        .cloned()
+        .collect())
+}
+
 /// Removes one stored secret (operator tool: forget a pairing, a pinned
 /// certificate…). Returns whether it existed.
 pub async fn forget_secret(path: &Path, key: &MasterKey, name: &str) -> io::Result<bool> {

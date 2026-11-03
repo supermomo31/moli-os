@@ -28,9 +28,13 @@ Measured on 2026-10-04, next to a real Home Assistant on the same machine
   driver is restarted with backoff, the core never goes down), journal of every write,
   last-known-state cache restored with its original age, encrypted secret store, a guard
   that holds agent commands in protected rooms for a human.
-- **24 integrations** (`integrations/`): Zigbee2MQTT, Hue, Sonos, Tuya, Reolink, Frigate,
-  Philips TV, Bambu Lab, Klipper, Tapo, IPP printers, UPnP routers, presence, Telegram,
-  phones, plus declarative profiles (Daikin, Meross, Open-Meteo, Tempo, iopool…).
+- **32 integrations** (`integrations/`): Zigbee2MQTT (and Matter-over-MQTT bridges), Hue,
+  Sonos, Google Cast, Amazon Echo (Alexa), Qobuz, ESPHome voice satellites, Tuya (local and
+  cloud), tado°, Somfy TaHoma (Overkiz), Netatmo cameras, Reolink, Frigate, Philips TV,
+  Bambu Lab, Klipper / Moonraker, Tapo, IPP printers, UPnP routers, host & PCs, Wi-Fi
+  presence, house helpers, Telegram, phones, plus declarative profiles (Daikin, Meross,
+  Open-Meteo weather & air quality, Tempo, iopool) and energy import tools (`tools/enedis`
+  via MyElectricalData, `tools/grdf` via PyGazpar).
 - **Dashboard** (Svelte 5) embedded in the binary: rooms, lights, climate, cameras, energy,
   a live floor plan in 2D and 3D.
 - **Moli, the assistant**: conversation (text or voice) with an OpenAI-compatible model,
@@ -71,8 +75,12 @@ them protocol knowledge, interoperability cross-checks or data.
 - Home Assistant: the home Moli OS was built beside; the import tools read an existing installation.
 - tinytuya and localtuya: the Tuya local protocol; frames cross-checked against their output.
 - python-kasa: the TP-Link KLAP session, cross-checked against its output.
-- pydaikin, meross_lan / MerossIot, ha-bambulab, androidtvremote2: protocol documentation.
-- Zigbee2MQTT, Frigate, Moonraker: their documented APIs.
+- pydaikin, meross_lan / MerossIot, ha-bambulab, androidtvremote2, pychromecast, aioesphomeapi,
+  alexapy, pyoverkiz, python-tado: protocol documentation.
+- qobuz-dl and streamrip: Qobuz web player API signing and stream resolution.
+- PyGazpar and MyElectricalData: GRDF (Gazpar) and Enedis (Linky Data Connect) energy history
+  import tools (`tools/grdf`, `tools/enedis`).
+- Zigbee2MQTT, Frigate, Moonraker, Netatmo Connect: their documented APIs.
 - Powercalc: measured light power profiles (see `NOTICE`).
 - Weather data by [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0).
 
