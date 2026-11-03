@@ -215,7 +215,11 @@ impl Voice {
             pcm.as_chunks::<2>()
                 .0
                 .iter()
-                .flat_map(|b| i16::from_le_bytes(*b).saturating_mul(MIC_GAIN).to_le_bytes())
+                .flat_map(|b| {
+                    i16::from_le_bytes(*b)
+                        .saturating_mul(MIC_GAIN)
+                        .to_le_bytes()
+                })
                 .collect()
         };
         run.pcm.extend_from_slice(&cleaned);
