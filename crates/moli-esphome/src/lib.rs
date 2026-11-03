@@ -573,6 +573,7 @@ async fn session(
         Duration::from_secs(config.window_s),
         config.media_base.clone(),
         config.cast_speaker.clone(),
+        id.clone(),
     );
 
     let mut ping = tokio::time::interval(PING_EVERY);

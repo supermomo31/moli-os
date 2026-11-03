@@ -34,6 +34,9 @@ pub struct Config {
     pub live: Option<Live>,
     #[serde(default, rename = "meter")]
     pub meters: Vec<MeterConfig>,
+    /// Loads Moli switches on the panels' surplus and in off-peak hours.
+    #[serde(default, rename = "load")]
+    pub loads: Vec<crate::load::LoadConfig>,
 }
 
 fn default_timezone() -> String {
@@ -124,6 +127,11 @@ pub struct MeterConfig {
     /// What flows through this meter: gas when it is a gas meter.
     #[serde(default)]
     pub fuel: Fuel,
+    /// `point` holds consumption already split by hour, as JSON text
+    /// (`[{"hour": ms, "kwh": …}]`): a service that reports a day late. Each
+    /// hour is filed as it is, never spread over the time of the report.
+    #[serde(default)]
+    pub history: bool,
 }
 
 impl MeterConfig {
@@ -169,6 +177,21 @@ pub enum Role {
     /// One appliance (a plug, a machine's own meter): shown on its own,
     /// never added to the total nor taken from what circuits leave over.
     Appliance,
+    /// What solar panels produce (an inverter's lifetime index): never
+    /// billed; with `export`, tells what the home used of it.
+    Solar,
+    /// What the home sends to the grid (the returned energy of a clamp on
+    /// the main feed, a Linky injection index): `price` is what it earns.
+    Export,
+}
+
+impl Role {
+    /// Meters that count energy the home takes (grid, whole home, circuits,
+    /// appliances), as opposed to what it makes or sends out.
+    #[must_use]
+    pub fn consumes(self) -> bool {
+        !matches!(self, Self::Solar | Self::Export)
+    }
 }
 
 /// What a decrease of the counter means.
@@ -223,14 +246,40 @@ impl Config {
                     ));
                 }
             }
+            if !m.role.consumes() && m.period.is_some() {
+                return Err(format!(
+                    "meter {:?}: `period` is for a meter the supplier bills",
+                    m.id
+                ));
+            }
+            if m.role == Role::Solar && m.price.is_some() {
+                return Err(format!(
+                    "meter {:?}: solar production has no price (an `export` meter's price is what selling earns)",
+                    m.id
+                ));
+            }
             if m.estimate && (m.role != Role::Appliance || m.integrate || m.power.is_some()) {
                 return Err(format!(
                     "meter {:?}: `estimate` is for an appliance, without `integrate` nor `power`",
                     m.id
                 ));
             }
+            if m.history && (!m.role.consumes() || m.integrate || m.estimate || m.period.is_some())
+            {
+                return Err(format!(
+                    "meter {:?}: `history` is for a meter that consumes, without `integrate`, `estimate` nor `period`",
+                    m.id
+                ));
+            }
             if let Some(price) = m.price {
                 check_price(price).map_err(|e| format!("meter {:?}: {e}", m.id))?;
+            }
+        }
+        let mut load_ids = HashSet::new();
+        for load in &self.loads {
+            load.check()?;
+            if !load_ids.insert(&load.id) {
+                return Err(format!("duplicate load id {:?}", load.id));
             }
         }
         if let Some(live) = &self.live {
@@ -341,6 +390,9 @@ mod tests {
         );
         let circuit = "[[meter]]\nid = \"c3\"\nname = \"Circuit 3\"\npoint = \"em:x/e3\"\nrole = \"circuit\"\n";
         parse(&format!("{ok}{circuit}{plug}within = \"c3\"\n")).unwrap();
+        let late = "[[meter]]\nid = \"linky\"\nname = \"Linky\"\npoint = \"enedis:linky/hours\"\nrole = \"grid\"\nhistory = true\n";
+        assert!(parse(&format!("{ok}{late}")).is_ok());
+        assert!(parse(&format!("{ok}{late}integrate = true\n")).is_err());
         let lamp = "[[meter]]\nid = \"lampe\"\nname = \"Lampe\"\npoint = \"hue:l/on\"\nrole = \"appliance\"\nestimate = true\n";
         parse(&format!("{ok}{lamp}")).unwrap();
         assert!(parse(&format!("{ok}{}", lamp.replace("appliance", "circuit"))).is_err());

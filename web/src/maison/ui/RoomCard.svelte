@@ -1,5 +1,5 @@
 <script>
-  import { hub, value, act, isOn, powerKey, protectedRoom, num, nameOf, deviceKind, lampsOf, doorOpen, leak, motion, lowBattery, unpowered, isFixture, note, reachable, quiet, outletsOf } from '../lib/home.svelte.js';
+  import { hub, value, act, toggle, isOn, powerKey, protectedRoom, num, nameOf, deviceKind, lampsOf, doorOpen, leak, motion, lowBattery, unpowered, isFixture, note, reachable, quiet, outletsOf } from '../lib/home.svelte.js';
   import { t } from '../../lib/i18n.svelte.js';
   import Icon from './Icon.svelte';
   import LightTile from './LightTile.svelte';
@@ -7,6 +7,8 @@
   import CoverTile from './CoverTile.svelte';
   import AmbiancePicker from './AmbiancePicker.svelte';
   import { phase, PHASES } from '../lib/printers.js';
+  import { canWrite, pointOf } from '../lib/capabilities.js';
+  import { climateMode } from '../lib/climate.js';
 
   /** One room, compact: its temperature and a switch for its lights in the
    *  head, its lights and plugs as small pads (a ⚙ opens a lamp's dimmer,
@@ -18,10 +20,59 @@
 
   const locked = $derived(protectedRoom(room.name));
 
+  /** What a quiet sensor shows when nothing is wrong (the « Capteurs » view): one
+   *  small icon by what it measures, a value only when it is a measure. */
+  const NOISE = /^(linkquality|voltage|power_outage_count|motion_timeout|illumination|action|side|operation_mode|update|identify|countdown|cycle_time|random_time|switch_inching|relay_status|light_mode|child_lock|battery_state|.*_calibration)/;
+  const ORDER = ['occupancy', 'contact', 'smoke', 'water_leak', 'temperature', 'humidity', 'illuminance', 'battery'];
+  const ICON_OF = { temperature: 'thermometer', humidity: 'humidity', illuminance: 'sun', contact: 'door-closed', occupancy: 'walk', smoke: 'smoke', water_leak: 'water-alert' };
+  function quietChip(d) {
+    const name = nameOf(d.id);
+    const read = (p) => value(d.id, p.key);
+    const rank = (p) => {
+      const i = ORDER.indexOf(p.semantic);
+      return i < 0 ? ORDER.length : i;
+    };
+    const p = d.points
+      .filter((p) => p.access?.read !== false && !NOISE.test(p.key) && read(p) != null && read(p) !== '')
+      .sort((a, b) => rank(a) - rank(b))[0];
+    if (!p) return null; // nothing read yet: nothing to show (no mystery icon)
+    const x = read(p);
+    const shown = typeof x === 'number' ? num(x, p.semantic === 'battery' ? 0 : 1) : x === true ? t('commun.oui').toLowerCase() : x === false ? t('commun.non').toLowerCase() : x;
+    const title = t('commun.piece.lecture', { name, label: p.label, value: `${shown}${p.unit && typeof x === 'number' ? ` ${p.unit}` : ''}` });
+    if (p.semantic === 'battery' && typeof x === 'number') {
+      return { tone: x >= 50 ? 'good' : '', icon: x >= 80 ? 'battery' : x >= 30 ? 'battery-50' : 'battery-20', text: t('commun.pourcent', { n: num(x) }), title };
+    }
+    const icon = ICON_OF[p.semantic];
+    if (!icon) return null; // a reading Moli has no picture for stays quiet
+    if (typeof x === 'number') return { tone: '', icon, text: `${shown}${p.unit ? ` ${p.unit}` : ''}`, title };
+    return { tone: '', icon, text: '', title };
+  }
+
+  /** A reading graded by the usual norms: the tone of its chip says whether the air is
+   *  fine ('good'), worth watching ('warm') or bad ('alert'). The tooltip says it in words.
+   *  CO: WHO 9 ppm over 8 h, 30 ppm over 1 h. CO₂: 1000 ppm is the French indoor
+   *  guideline, 1500 ppm calls for fresh air. */
+  const LEVELS = [
+    ['commun.niveau.bon', 'good'],
+    ['commun.niveau.attention', 'warm'],
+    ['commun.niveau.mauvais', 'alert'],
+  ];
+  const grade = (x, limits) => LEVELS[limits.filter((l) => x >= l).length];
+  const GRADES = {
+    co: (x) => grade(x, [9, 30]),
+    co2: (x) => grade(x, [1000, 1500]),
+    // Humidity has no universal norm (it depends on the room and the season): always blue.
+    humidity: () => [null, 'cool'],
+  };
+  const measure = (kind, x, label, text) => {
+    const [word, tone] = GRADES[kind](x);
+    return { tone, icon: kind, text, title: word ? `${label} : ${text} · ${t(word)}` : `${label} : ${text}` };
+  };
+
   function chips(d) {
     // An appliance that is no button: what it draws, nothing when unplugged.
     if (quiet(d.id)) {
-      if (d.online === false) return every ? [{ tone: '', icon: 'alert', text: t('commun.piece.hors_ligne', { name: nameOf(d.id) }) }] : [];
+      if (d.online === false) return every ? [{ tone: '', icon: 'offline', text: t('commun.piece.hors_ligne', { name: nameOf(d.id) }) }] : [];
       const w = value(d.id, 'cur_power') ?? value(d.id, 'power');
       if (typeof w === 'number' && w >= 3) return [{ tone: 'warm', icon: 'power', text: t('commun.piece.consomme', { name: nameOf(d.id), watts: num(w) }) }];
       return every ? [{ tone: '', icon: 'power', text: t('commun.piece.au_repos', { name: nameOf(d.id) }) }] : [];
@@ -29,34 +80,37 @@
     // A silent sensor's last readings are old news: say it is silent.
     if (d.online === false && deviceKind(d) === 'sensor') {
       const dead = lowBattery(d.id);
-      return [{ tone: dead ? 'alert' : '', icon: 'alert', text: t(dead ? 'commun.piece.pile_vide' : 'commun.piece.hors_ligne', { name: nameOf(d.id) }) }];
+      return [{ tone: dead ? 'alert' : '', icon: dead ? 'battery-alert' : 'offline', text: t(dead ? 'commun.piece.pile_vide' : 'commun.piece.hors_ligne', { name: nameOf(d.id) }) }];
     }
     const out = [];
     const v = (k) => value(d.id, k);
-    if (v('smoke') === true) out.push({ tone: 'alert', icon: 'fire', text: t('commun.capteur.fumee') });
-    if (leak(d.id)) out.push({ tone: 'alert', icon: 'water', text: t('commun.piece.fuite', { name: nameOf(d.id) }) });
+    if (v('smoke') === true) out.push({ tone: 'alert', icon: 'smoke', text: t('commun.capteur.fumee') });
+    if (v('carbon_monoxide') === true) out.push({ tone: 'alert', icon: 'smoke', text: t('commun.capteur.monoxyde') });
+    if (leak(d.id)) out.push({ tone: 'alert', icon: 'water-alert', text: t('commun.piece.fuite', { name: nameOf(d.id) }) });
     const open = doorOpen(d.id);
-    if (open === true) out.push({ tone: 'warm', icon: 'door-open', text: t('commun.piece.ouverte', { name: nameOf(d.id) }) });
-    else if (open === false) out.push({ tone: '', icon: 'door-closed', text: t('commun.piece.fermee', { name: nameOf(d.id) }) });
+    if (open === true) out.push({ tone: 'warm', icon: 'door-open', text: '', title: t('commun.piece.ouverte', { name: nameOf(d.id) }) });
+    else if (open === false) out.push({ tone: '', icon: 'door-closed', text: '', title: t('commun.piece.fermee', { name: nameOf(d.id) }) });
     // The temperature is the room's, in the head.
-    const hum = v('humidity') ?? v('humidity_value');
-    if (typeof hum === 'number') out.push({ tone: '', icon: 'humidity', text: t('commun.pourcent', { n: num(hum) }) });
+    const hum = v('humidity') ?? v('humidity_value') ?? v('va_humidity');
+    if (typeof hum === 'number') out.push(measure('humidity', hum, t('commun.capteur.humidite'), t('commun.pourcent', { n: num(hum) })));
     const co2 = v('co2_value') ?? v('co2');
-    if (typeof co2 === 'number') out.push({ tone: co2 > 1200 ? 'warm' : '', icon: 'leaf', text: `CO₂ ${num(co2)} ppm` });
-    if (motion(d.id)) out.push({ tone: 'warm', icon: 'motion', text: t('commun.piece.presence') });
-    if (lowBattery(d.id)) out.push({ tone: 'alert', icon: 'alert', text: t('commun.piece.pile_faible', { name: nameOf(d.id) }) });
+    if (typeof co2 === 'number') out.push(measure('co2', co2, 'CO₂', `${num(co2)} ppm`));
+    const co = v('co');
+    if (typeof co === 'number') out.push(measure('co', co, t('commun.capteur.monoxyde'), `${num(co)} ppm`));
+    const lx = v('illuminance') ?? v('illuminance_lux');
+    if (typeof lx === 'number') out.push({ tone: '', icon: 'sun', text: `${num(lx)} lx`, title: t('commun.piece.eclairement') });
+    if (motion(d.id)) out.push({ tone: 'warm', icon: 'walk', text: '', title: t('commun.piece.presence') });
+    if (lowBattery(d.id)) out.push({ tone: 'alert', icon: 'battery-alert', text: t('commun.piece.pile_faible', { name: nameOf(d.id) }) });
     if (deviceKind(d) === 'camera') out.push({ tone: 'cool', icon: 'cctv', text: nameOf(d.id), href: '#/cameras' });
     if (deviceKind(d) === 'printer') {
       const st = phase(v('state'));
       const text = st === 'printing' || st === 'paused' ? `${PHASES[st].label.toLowerCase()} ${t('commun.pourcent', { n: Math.round(Number(v('progress') ?? 0)) })}` : PHASES[st].label.toLowerCase();
       out.push({ tone: PHASES[st].tone, icon: 'printer3d', text: `${nameOf(d.id)} · ${d.online === false ? t('commun.piece.imprimante_eteinte') : text}`, href: '#/impression' });
     }
+    // A quiet sensor in the filtered view: an icon (its reading in the tooltip), not a sentence.
     if (every && !out.length) {
-      // Its first reading, so that a quiet sensor still shows it is there.
-      const p = d.points.find((p) => p.access?.read !== false && value(d.id, p.key) != null && value(d.id, p.key) !== '');
-      const x = p ? value(d.id, p.key) : null;
-      const shown = typeof x === 'number' ? num(x, 1) : x === true ? t('commun.oui').toLowerCase() : x === false ? t('commun.non').toLowerCase() : x;
-      out.push({ tone: '', icon: 'info', text: p ? t('commun.piece.lecture', { name: nameOf(d.id), label: p.label, value: `${shown}${p.unit ? ` ${p.unit}` : ''}` }) : nameOf(d.id) });
+      const quiet = quietChip(d);
+      if (quiet) out.push(quiet);
     }
     return out;
   }
@@ -70,7 +124,8 @@
   const temp = $derived.by(() => {
     const readings = [...room.sensors, ...room.climates]
       .filter((d) => d.online !== false)
-      .map((d) => value(d.id, 'temperature') ?? value(d.id, 'temp_current'))
+      // Tuya's Zigbee probes say `va_temperature`.
+      .map((d) => value(d.id, 'temperature') ?? value(d.id, 'temp_current') ?? value(d.id, 'va_temperature'))
       .filter((x) => typeof x === 'number');
     return readings.length ? readings.reduce((a, b) => a + b, 0) / readings.length : null;
   });
@@ -79,9 +134,11 @@
 
   // ---- the room's switch: its lights, never its TV or plugs (D12) -----------------------
 
+  const writableLights = $derived(room.lights.filter((d) => canWrite(d, powerKey(d))));
+  const writableLit = $derived(writableLights.some((d) => isOn(d.id)));
   function roomPower() {
-    const on = !room.lit;
-    for (const d of room.lights) {
+    const on = !writableLit;
+    for (const d of writableLights) {
       if (isOn(d.id) === on || (on && unpowered(d.id) && !isFixture(d))) continue;
       const key = powerKey(d);
       if (key) act(`${d.id}/${key}`, typeof value(d.id, key) === 'string' ? (on ? 'ON' : 'OFF') : on, t(on ? 'commun.piece.label_allumer' : 'commun.piece.label_eteindre', { name: room.name }));
@@ -119,6 +176,9 @@
     return [{ d, point: ALL, outlets }, ...outlets.map((o) => ({ d, point: o.key, name: o.name }))];
   };
   const litCount = (outlets, id) => outlets.filter((o) => isOn(id, o.key)).length;
+  const canTap = (d, point, outlets) => outlets
+    ? outlets.some((o) => canWrite(d, o.key))
+    : canWrite(d, point ?? powerKey(d));
 
   /** The pads: lights, then TV and speakers, then plugs. */
   const pads = $derived([
@@ -140,6 +200,7 @@
   }
 
   function tap(d, point, outlets, name) {
+    if (!canTap(d, point, outlets)) return;
     if (unpowered(d.id) && !isFixture(d)) {
       note(t('commun.lampe.coupee_note', { label: nameOf(d.id) }));
       return;
@@ -147,27 +208,17 @@
     if (outlets) {
       // All on → all off; otherwise everything on.
       const on = litCount(outlets, d.id) < outlets.length;
-      for (const o of outlets) if (isOn(d.id, o.key) !== on) act(`${d.id}/${o.key}`, on, `${nameOf(d.id)} · ${o.name}`);
+      for (const o of outlets) if (canWrite(d, o.key) && isOn(d.id, o.key) !== on) act(`${d.id}/${o.key}`, on, `${nameOf(d.id)} · ${o.name}`);
       return;
     }
-    if (name) {
-      act(`${d.id}/${point}`, !isOn(d.id, point), `${nameOf(d.id)} · ${name}`);
-      return;
-    }
-    const key = point ?? powerKey(d);
-    if (!key) return;
-    const cur = value(d.id, key);
-    act(`${d.id}/${key}`, typeof cur === 'string' ? (isOn(d.id, point) ? 'OFF' : 'ON') : !isOn(d.id, point), nameOf(d.id));
+    toggle(d.id, name ? `${nameOf(d.id)} · ${name}` : nameOf(d.id), point);
   }
 
-  // The unit's modes (as it says them) → the catalogue key of their short name.
-  const MODES = {
-    froid: 'commun.piece.mode.froid',
-    chaud: 'commun.piece.mode.chaud',
-    auto: 'commun.piece.mode.auto',
-    déshumidification: 'commun.piece.mode.deshumidification',
-    ventilation: 'commun.piece.mode.ventilation',
-  };
+  function climateState(on, mode) {
+    if (on === false || mode === 'off') return t('commun.piece.eteinte');
+    const style = climateMode(mode);
+    return style ? t(style.label) : mode ?? (on === true ? t('commun.piece.en_marche') : '—');
+  }
   let openClim = $state(null);
 </script>
 
@@ -187,7 +238,7 @@
       </button>
     {/if}
     {#if room.lights.length}
-      <button class="room-switch" class:on={room.lit} onclick={roomPower} aria-pressed={!!room.lit} title={room.lit ? t('commun.piece.tout_eteindre') : t('commun.piece.tout_allumer')} aria-label={t(room.lit ? 'commun.piece.label_eteindre' : 'commun.piece.label_allumer', { name: room.name })}><i></i></button>
+      <button class="room-switch" class:on={writableLit} disabled={!writableLights.length} onclick={roomPower} aria-pressed={writableLit} title={writableLit ? t('commun.piece.tout_eteindre') : t('commun.piece.tout_allumer')} aria-label={t(writableLit ? 'commun.piece.label_eteindre' : 'commun.piece.label_allumer', { name: room.name })}><i></i></button>
     {/if}
   </div>
 
@@ -209,7 +260,7 @@
               {#if !icons}<b>{label}</b><small>{stateOf(d, point)}</small>{/if}
             </a>
           {:else}
-            <button class="pad" class:on={lit} class:cut class:off-grid={!reachable(d.id) && !cut} onclick={() => tap(d, point, outlets, name)} title={label} aria-pressed={lit} aria-label={t('commun.action', { label, action: stateOf(d, point, outlets) })}>
+            <button class="pad" class:on={lit} class:cut class:off-grid={!reachable(d.id) && !cut} disabled={!canTap(d, point, outlets)} onclick={() => tap(d, point, outlets, name)} title={label} aria-pressed={lit} aria-label={t('commun.action', { label, action: stateOf(d, point, outlets) })}>
               <span class="ico"><Icon name={outlets ? 'power' : padIcon(d)} size={icons ? 22 : 18} /></span>
               {#if !icons}<b>{label}</b><small>{stateOf(d, point, outlets)}</small>{/if}
             </button>
@@ -232,12 +283,17 @@
   {/each}
 
   {#each room.climates as d (d.id)}
-    {@const on = isOn(d.id)}
-    <button class="clim" class:on onclick={() => (openClim = openClim === d.id ? null : d.id)} aria-expanded={openClim === d.id}>
+    {@const mode = pointOf(d, 'mode') ? value(d.id, 'mode') : null}
+    {@const on = pointOf(d, 'on') ? value(d.id, 'on') : mode == null ? null : mode !== 'off'}
+    {@const temperature = pointOf(d, 'temperature') ? value(d.id, 'temperature') : null}
+    {@const target = pointOf(d, 'target_temperature') ? value(d.id, 'target_temperature') : null}
+    <button class="clim" class:on={on === true} onclick={() => (openClim = openClim === d.id ? null : d.id)} aria-expanded={openClim === d.id}>
       <Icon name="air-conditioner" size={18} />
       <b>{nameOf(d.id)}</b>
-      <span class="num">{num(value(d.id, 'temperature'), 0)}° → {num(value(d.id, 'target_temperature'), 1)}°</span>
-      <span class="state">{on ? (MODES[value(d.id, 'mode')] ? t(MODES[value(d.id, 'mode')]) : t('commun.piece.en_marche')) : t('commun.piece.eteinte')}</span>
+      {#if Number.isFinite(temperature) || Number.isFinite(target)}
+        <span class="num">{#if Number.isFinite(temperature)}{num(temperature, 0)}°{/if}{#if Number.isFinite(temperature) && Number.isFinite(target)} → {/if}{#if Number.isFinite(target)}{num(target, 1)}°{/if}</span>
+      {/if}
+      <span class="state">{climateState(on, mode)}</span>
     </button>
     {#if openClim === d.id}
       <ClimateCard id={d.id} name={nameOf(d.id)} />
@@ -248,9 +304,9 @@
     <div class="chips">
       {#each sensorChips as c, i (i)}
         {#if c.href}
-          <a class="chip {c.tone}" href={c.href}><Icon name={c.icon} size={15} />{c.text}</a>
+          <a class="chip {c.tone}" href={c.href} title={c.title ?? c.text}><Icon name={c.icon} size={15} />{c.text}</a>
         {:else}
-          <span class="chip {c.tone}"><Icon name={c.icon} size={15} />{c.text}</span>
+          <span class="chip {c.tone}" title={c.title ?? c.text}><Icon name={c.icon} size={c.text ? 15 : 18} label={c.text ? null : c.title} />{c.text}</span>
         {/if}
       {/each}
     </div>
@@ -300,6 +356,14 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* A phone: the name wraps instead of being cut by the temperature gauge. */
+  @media (max-width: 520px) {
+    .title h2 {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
   }
 
   .lock {

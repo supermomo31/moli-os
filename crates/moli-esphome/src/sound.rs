@@ -22,8 +22,9 @@ pub fn wav(pcm: &[u8], rate: u32) -> Vec<u8> {
     out
 }
 
-/// Two soft notes going down (A5 then E5): the conversation is over. FLAC,
-/// the one format every satellite media player decodes (some have no WAV).
+/// Two soft notes going down (A5 then E5): the conversation is over.
+/// Like a spoken answer, TTS_END plays this through the media player's
+/// announcement decoder. Some firmwares decode FLAC and MP3, but not WAV.
 #[must_use]
 pub fn chime() -> Vec<u8> {
     const RATE: u32 = 22_050;
@@ -48,7 +49,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wav_header_and_chime() {
+    fn wav_header_for_transcription() {
         let w = wav(&[1, 0, 2, 0], 16_000);
         assert_eq!(&w[..4], b"RIFF");
         assert_eq!(&w[8..16], b"WAVEfmt ");

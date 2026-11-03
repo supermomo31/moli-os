@@ -40,6 +40,7 @@
   "salon.enceinte.basculer_vers": "Basculer la lecture vers {name}",
   "salon.enceinte.ajouter_lecteur": "Jouer aussi sur {name}",
   "salon.enceinte.rechercher": "Rechercher un titre, un artiste, un album sur Qobuz…",
+  "salon.enceinte.volume_annonce": "Pendant une annonce",
 
   "salon.tele.label": "Télécommande",
   "salon.tele.eteindre": "Éteindre la TV",
@@ -196,5 +197,10 @@
   "salon.papier.partiel_other": "{count} pages envoyées sur {total}, la suite non : {message}",
   "salon.papier.page_impossible": "page impossible à préparer",
   "salon.papier.choisir": "Choisis une photo ou un PDF.",
-  "salon.papier.erreur": "erreur {status}"
+  "salon.papier.erreur": "erreur {status}",
+  "salon.apercu": "Aperçu de l’écran",
+  "salon.apercu_aide": "Une image par seconde, prise seulement pendant qu’elle est affichée.",
+  "salon.apercu_veille": "La télé est en veille : rien à montrer.",
+  "salon.apercu_montrer": "Afficher",
+  "salon.apercu_masquer": "Masquer"
 }

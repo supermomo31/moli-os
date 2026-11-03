@@ -2,9 +2,11 @@
   import { hub, device, deviceKind, value, act, num, nameOf, reachable, savePref } from '../lib/home.svelte.js';
   import { t } from '../../lib/i18n.svelte.js';
   import Icon from './Icon.svelte';
+  import { pointOf, canWrite, numericRange, quantize } from '../lib/capabilities.js';
 
-  /** A speaker (Cast, Sonos…): cover art, title, player selector (with transfer
-   *  to another speaker), previous / play-pause / next, volume, mute. */
+  /** A speaker (Cast, Sonos, AirPlay…): cover art, title, player selector
+   *  (with transfer to another speaker), previous / play-pause / next,
+   *  volume, mute, and announcement volume when supported. */
   let { id = null, name = null } = $props();
 
   const speakers = $derived(Object.values(hub.devices).filter((d) => deviceKind(d) === 'speaker'));
@@ -28,6 +30,7 @@
 
   const current = $derived(device(activeId));
   const online = $derived(reachable(activeId));
+  const tells = $derived(pointOf(current, 'playing') || pointOf(current, 'state'));
   const playing = $derived(value(activeId, 'playing') === true);
   const state = $derived(value(activeId, 'state'));
   const rawTitle = $derived(value(activeId, 'title'));
@@ -36,11 +39,29 @@
   const image = $derived(value(activeId, 'image'));
   const volume = $derived(value(activeId, 'volume'));
   const muted = $derived(value(activeId, 'mute') === true);
-  const hasSkip = $derived(current?.points.some((p) => p.key === 'next' && p.access?.write) ?? false);
-  const canPlaySearch = $derived(current?.points.some((p) => p.key === 'play' && p.access?.write) ?? false);
+
+  const plays = $derived(canWrite(current, 'playing'));
+  const hasSkip = $derived(canWrite(current, 'next'));
+  const canPlaySearch = $derived(canWrite(current, 'play'));
+  const volumeRange = $derived(numericRange(current, 'volume', 1, { min: 0, max: 100 }));
+  const announceRange = $derived(numericRange(current, 'announce_volume', 5, { min: 0, max: 100 }));
+  const sets = $derived(canWrite(current, 'volume') && volumeRange);
+  const mutes = $derived(canWrite(current, 'mute'));
+  const announces = $derived(canWrite(current, 'announce_volume') && announceRange);
+  const announceVolume = $derived(value(activeId, 'announce_volume'));
 
   let dragging = $state(null);
+  let draggingAnnounce = $state(null);
   let query = $state('');
+
+  function setLevel(key, event) {
+    if (!canWrite(current, key)) return;
+    const range = key === 'volume' ? volumeRange : announceRange;
+    const next = quantize(Number(event.currentTarget.value), range);
+    if (next != null && next !== value(activeId, key)) {
+      act(`${activeId}/${key}`, next, t(key === 'volume' ? 'salon.volume' : 'salon.enceinte.volume_annonce'));
+    }
+  }
 
   function selectSpeaker(targetId) {
     if (targetId === activeId) return;
@@ -50,7 +71,7 @@
     picked = targetId;
     savePref('moli.speaker', targetId);
     const target = device(targetId);
-    if (wasPlaying && trackQuery && target?.points.some((p) => p.key === 'play' && p.access?.write)) {
+    if (wasPlaying && trackQuery && canWrite(target, 'play')) {
       act(`${prevId}/playing`, false, t('salon.pause'));
       act(`${targetId}/play`, trackQuery, t('salon.enceinte.jouer_sur', { name: nameOf(targetId) }));
     }
@@ -75,15 +96,17 @@
   <section class="card sound" class:lit={playing}>
     <div class="card-head">
       <h2><Icon name="speaker" size={18} />{id ? nameOf(activeId, name) : t('salon.enceinte.multimedia')}</h2>
-      <span class="chip { !online ? '' : playing ? 'warm' : '' }">
-        {!online
-          ? t('commun.piece.injoignable')
-          : playing
+      {#if !online}
+        <span class="chip">{t('commun.piece.injoignable')}</span>
+      {:else if tells}
+        <span class="chip {playing ? 'warm' : ''}">
+          {playing
             ? t('salon.enceinte.lecture')
             : state === 'paused' || state === 'paused_playback'
               ? t('salon.enceinte.en_pause')
               : t('salon.enceinte.arret')}
-      </span>
+        </span>
+      {/if}
     </div>
 
     {#if !id && speakers.length > 1}
@@ -100,7 +123,7 @@
               <span>{nameOf(sp.id)}</span>
               {#if spPlaying}<span class="dot" aria-hidden="true"></span>{/if}
             </button>
-            {#if sp.id !== activeId && title && reachable(sp.id) && sp.points.some((p) => p.key === 'play' && p.access?.write)}
+            {#if sp.id !== activeId && title && reachable(sp.id) && canWrite(sp, 'play')}
               <button
                 class="sp-add"
                 onclick={() => alsoPlayOn(sp.id)}
@@ -114,54 +137,58 @@
       </div>
     {/if}
 
-    <div class="now-playing">
-      <div class="cover" class:spinning={playing}>
-        {#if image}
-          <img src={image} alt="" referrerpolicy="no-referrer" />
-        {:else}
-          <Icon name="speaker" size={28} />
+    {#if tells || title || plays}
+      <div class="now-playing">
+        <div class="cover" class:spinning={playing}>
+          {#if image}
+            <img src={image} alt="" referrerpolicy="no-referrer" />
+          {:else}
+            <Icon name="speaker" size={28} />
+          {/if}
+        </div>
+        <div class="meta">
+          {#if title}
+            <b class="track-title" title={title}>{title}</b>
+            {#if artist}<span class="artist muted" title={artist}>{artist}</span>{/if}
+          {:else if tells}
+            <span class="muted">{playing ? t('salon.enceinte.son_tele') : t('salon.enceinte.rien')}</span>
+          {/if}
+          <span class="on-device">{nameOf(activeId, name)}</span>
+        </div>
+        {#if plays}
+          <div class="transport">
+            {#if hasSkip}
+              <button
+                class="round soft small-btn"
+                disabled={!online || !title}
+                onclick={() => act(`${activeId}/previous`, true, t('salon.tele.precedent'))}
+                aria-label={t('salon.tele.precedent')}
+                title={t('salon.tele.precedent')}>
+                <Icon name="previous" size={20} />
+              </button>
+            {/if}
+            <button
+              class="round"
+              disabled={!online}
+              onclick={() => act(`${activeId}/playing`, !playing, playing ? t('salon.pause') : t('salon.lecture'))}
+              aria-label={playing ? t('salon.pause') : t('salon.lecture')}
+              title={playing ? t('salon.pause') : t('salon.lecture')}>
+              <Icon name={playing ? 'pause' : 'play'} size={26} />
+            </button>
+            {#if hasSkip}
+              <button
+                class="round soft small-btn"
+                disabled={!online || !title}
+                onclick={() => act(`${activeId}/next`, true, t('salon.tele.suivant'))}
+                aria-label={t('salon.tele.suivant')}
+                title={t('salon.tele.suivant')}>
+                <Icon name="next" size={20} />
+              </button>
+            {/if}
+          </div>
         {/if}
       </div>
-      <div class="meta">
-        {#if title}
-          <b class="track-title" title={title}>{title}</b>
-          {#if artist}<span class="artist muted" title={artist}>{artist}</span>{/if}
-        {:else}
-          <span class="muted">{playing ? t('salon.enceinte.son_tele') : t('salon.enceinte.rien')}</span>
-        {/if}
-        <span class="on-device">{nameOf(activeId, name)}</span>
-      </div>
-      <div class="transport">
-        {#if hasSkip}
-          <button
-            class="round soft small-btn"
-            disabled={!online || !title}
-            onclick={() => act(`${activeId}/previous`, true, t('salon.tele.precedent'))}
-            aria-label={t('salon.tele.precedent')}
-            title={t('salon.tele.precedent')}>
-            <Icon name="previous" size={20} />
-          </button>
-        {/if}
-        <button
-          class="round"
-          disabled={!online}
-          onclick={() => act(`${activeId}/playing`, !playing, playing ? t('salon.pause') : t('salon.lecture'))}
-          aria-label={playing ? t('salon.pause') : t('salon.lecture')}
-          title={playing ? t('salon.pause') : t('salon.lecture')}>
-          <Icon name={playing ? 'pause' : 'play'} size={26} />
-        </button>
-        {#if hasSkip}
-          <button
-            class="round soft small-btn"
-            disabled={!online || !title}
-            onclick={() => act(`${activeId}/next`, true, t('salon.tele.suivant'))}
-            aria-label={t('salon.tele.suivant')}
-            title={t('salon.tele.suivant')}>
-            <Icon name="next" size={20} />
-          </button>
-        {/if}
-      </div>
-    </div>
+    {/if}
 
     {#if canPlaySearch}
       <form class="search" onsubmit={submitSearch}>
@@ -177,35 +204,59 @@
       </form>
     {/if}
 
-    <div class="row">
-      <div class="vol">
-        <Icon name="volume-minus" size={18} />
+    {#if sets || mutes}
+      <div class="row">
+        {#if sets}
+          <div class="vol">
+            <Icon name="volume-minus" size={18} />
+            <input
+              type="range"
+              min={volumeRange.first}
+              max={volumeRange.last}
+              step={volumeRange.step}
+              disabled={!online}
+              value={dragging ?? volume ?? volumeRange.first}
+              oninput={(e) => (dragging = Number(e.currentTarget.value))}
+              onchange={(e) => {
+                dragging = null;
+                setLevel('volume', e);
+              }}
+              aria-label={t('salon.volume')} />
+            <Icon name="volume-plus" size={18} />
+            <b class="num">{num(dragging ?? volume)}</b>
+          </div>
+        {/if}
+        {#if mutes}
+          <button
+            class="round soft small-btn"
+            class:active={muted}
+            disabled={!online}
+            onclick={() => act(`${activeId}/mute`, !muted, t('salon.sourdine'))}
+            aria-label={t('salon.couper_son')}
+            title={t('salon.couper_son')}>
+            <Icon name={muted ? 'volume-off' : 'volume-high'} size={20} />
+          </button>
+        {/if}
+      </div>
+    {/if}
+
+    {#if announces}
+      <label class="announce">
+        <span>{t('salon.enceinte.volume_annonce')}</span>
         <input
           type="range"
-          min="0"
-          max="100"
-          disabled={!online}
-          value={dragging ?? volume ?? 0}
-          oninput={(e) => (dragging = Number(e.currentTarget.value))}
+          min={announceRange.first}
+          max={announceRange.last}
+          step={announceRange.step}
+          value={draggingAnnounce ?? announceVolume ?? announceRange.first}
+          oninput={(e) => (draggingAnnounce = Number(e.currentTarget.value))}
           onchange={(e) => {
-            const v = Number(e.currentTarget.value);
-            dragging = null;
-            act(`${activeId}/volume`, v, t('salon.volume'));
-          }}
-          aria-label={t('salon.volume')} />
-        <Icon name="volume-plus" size={18} />
-        <b class="num">{num(dragging ?? volume)}</b>
-      </div>
-      <button
-        class="round soft small-btn"
-        class:active={muted}
-        disabled={!online}
-        onclick={() => act(`${activeId}/mute`, !muted, t('salon.sourdine'))}
-        aria-label={t('salon.couper_son')}
-        title={t('salon.couper_son')}>
-        <Icon name={muted ? 'volume-off' : 'volume-high'} size={20} />
-      </button>
-    </div>
+            draggingAnnounce = null;
+            setLevel('announce_volume', e);
+          }} />
+        <b class="num">{num(draggingAnnounce ?? announceVolume)}</b>
+      </label>
+    {/if}
   </section>
 {/if}
 
@@ -371,8 +422,7 @@
   }
 
   .row {
-    display: grid;
-    grid-template-columns: 1fr auto;
+    display: flex;
     align-items: center;
     gap: 12px;
   }
@@ -404,6 +454,7 @@
   }
 
   .vol {
+    flex: 1;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -419,6 +470,32 @@
   }
 
   .vol b {
+    width: 28px;
+    text-align: right;
+    color: var(--ink);
+  }
+
+  .announce {
+    display: grid;
+    grid-template-columns: minmax(0, 11ch) 1fr auto;
+    align-items: center;
+    gap: 10px;
+    color: var(--ink-3);
+    font-size: 0.9rem;
+  }
+
+  .announce span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .announce input {
+    min-width: 0;
+    accent-color: var(--ink);
+    height: 24px;
+  }
+
+  .announce b {
     width: 28px;
     text-align: right;
     color: var(--ink);

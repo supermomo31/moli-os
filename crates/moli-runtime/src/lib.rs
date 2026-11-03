@@ -27,7 +27,8 @@ pub use addresses::KnownAddress;
 pub use driver::{BoxFuture, CommandRequest, Driver, DriverCtx, MediaPublisher};
 pub use hub::{
     ApprovalError, CORE_NAMESPACE, CommandError, DeviceView, DriverView, Hub, HubOptions,
-    LabelError, LabelPatch, MAX_LABEL, PermissionError, PermissionView, Snapshot,
+    LabelError, LabelPatch, MAX_LABEL, MAX_PENDING, MAX_PENDING_PER_CALLER, Opener,
+    PermissionError, PermissionView, Snapshot, opener,
 };
 pub use secrets::{MasterKey, forget_secret, list_secrets, set_secret};
 pub use stats::Stats;
