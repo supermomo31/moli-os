@@ -8,6 +8,8 @@ use crate::BoxFuture;
 /// One track ready to stream.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Track {
+    /// Service-specific track identifier (e.g. Qobuz track ID).
+    pub id: u64,
     pub title: String,
     pub artist: String,
     /// A picture of the album (a public address), if the service gives one.

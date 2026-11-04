@@ -984,6 +984,7 @@ const KINDS: &[&str] = &[
     "tahoma",
     "sonos",
     "qobuz",
+    "lms",
     "airplay",
     "reolink",
     "tuya",
@@ -1207,6 +1208,9 @@ fn build_driver(
             config.options.clone().try_into().with_context(context)?,
         )),
         "qobuz" => Arc::new(moli_qobuz::Qobuz::new(
+            config.options.clone().try_into().with_context(context)?,
+        )),
+        "lms" => Arc::new(moli_lms::Lms::new(
             config.options.clone().try_into().with_context(context)?,
         )),
         "airplay" => Arc::new(moli_airplay::Airplay::new(

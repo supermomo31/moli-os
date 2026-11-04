@@ -1646,6 +1646,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "moli-lms"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "http",
+ "http-body-util",
+ "moli-core",
+ "moli-i18n",
+ "moli-net",
+ "moli-runtime",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "moli-melcloud"
 version = "0.1.0"
 dependencies = [
@@ -1748,6 +1765,7 @@ dependencies = [
  "moli-ipp",
  "moli-izypower",
  "moli-lights",
+ "moli-lms",
  "moli-melcloud",
  "moli-moonraker",
  "moli-net",

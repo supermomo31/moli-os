@@ -229,6 +229,8 @@
   "systeme.pilotes.qobuz.desc": "The Qobuz subscription's music, played by the house's speakers.",
   "systeme.pilotes.cast.nom": "Google Cast",
   "systeme.pilotes.cast.desc": "Google Home and Nest speakers: playback, volume, track, and Moli’s voice.",
+  "systeme.pilotes.lms.nom": "piCorePlayer / LMS",
+  "systeme.pilotes.lms.desc": "SqueezeLite and piCorePlayer audio players driven by Lyrion Music Server.",
   "systeme.pilotes.helpers.nom": "House helpers",
   "systeme.pilotes.helpers.desc": "The values the house keeps for itself: house mode, alarm, budget.",
   "systeme.pilotes.philips.nom": "TV",

@@ -273,6 +273,7 @@ impl Client {
             .zip(urls)
             .filter_map(|(hit, url)| match url {
                 Ok((url, mime)) => Some(Track {
+                    id: hit.id,
                     title: hit.title.clone(),
                     artist: hit.artist.clone(),
                     image: hit.image.clone(),
