@@ -1,0 +1,25 @@
+[integration]
+id = "yeelight"
+name = "Yeelight Wi-Fi"
+brands = ["Yeelight"]
+models = []
+transport = "tcp"
+driver = "yeelight"
+crate = "moli-yeelight"
+
+[discovery]
+# No SSDP answer from Yeelight bulbs in practice: addresses are listed in
+# `devices`. Port 55443 is the LAN control port.
+mdns = []
+ssdp = []
+ports = [55443]
+
+[needs]
+# Local network only: the LAN protocol needs no account and no secret.
+secrets = []
+vars = []
+options = ["devices", "port", "poll_secs"]
+
+[origin]
+reused = "protocole LAN Yeelight (JSON sur TCP/55443, get_prop/set_power/set_bright/set_ct_abx/set_rgb)"
+author = "agent"

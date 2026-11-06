@@ -42,6 +42,7 @@ moli-tapo = { path = "crates/moli-tapo" }
 moli-shelly = { path = "crates/moli-shelly" }
 moli-izypower = { path = "crates/moli-izypower" }
 moli-solarman = { path = "crates/moli-solarman" }
+moli-yeelight = { path = "crates/moli-yeelight" }
 moli-igd = { path = "crates/moli-igd" }
 moli-ipp = { path = "crates/moli-ipp" }
 moli-assistant = { path = "crates/moli-assistant" }

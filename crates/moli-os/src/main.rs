@@ -982,6 +982,7 @@ const KINDS: &[&str] = &[
     "ipp",
     "host",
     "profile",
+    "yeelight",
     "demo",
 ];
 
@@ -1188,6 +1189,9 @@ fn build_driver(
             config.options.clone().try_into().with_context(context)?,
         )),
         "tuya" => Arc::new(moli_tuya::Tuya::new(
+            config.options.clone().try_into().with_context(context)?,
+        )),
+        "yeelight" => Arc::new(moli_yeelight::Yeelight::new(
             config.options.clone().try_into().with_context(context)?,
         )),
         "presence" => configured_driver(config, moli_presence::Presence::new)?,

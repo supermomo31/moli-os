@@ -1735,6 +1735,7 @@ dependencies = [
  "moli-tuya",
  "moli-voltalis",
  "moli-weather",
+ "moli-yeelight",
  "moli-z2m",
  "moli-zwave",
  "rusqlite",
@@ -2011,6 +2012,20 @@ dependencies = [
  "http",
  "http-body-util",
  "moli-net",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "moli-yeelight"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "moli-core",
+ "moli-i18n",
+ "moli-runtime",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",

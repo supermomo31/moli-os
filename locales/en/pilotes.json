@@ -618,5 +618,15 @@
   "pilotes.zwave.point_lu_seul": "point {point} is read-only",
   "pilotes.zwave.point_sans_cible": "point {point} has no write target",
   "pilotes.zwave.niveau_attend_nombre": "point level expects a number",
-  "pilotes.zwave.on_attend_booleen": "point on expects a boolean"
+  "pilotes.zwave.on_attend_booleen": "point on expects a boolean",
+  "pilotes.yeelight.description": "A Yeelight Wi-Fi bulb on the house network, driven locally (no cloud).",
+  "pilotes.yeelight.appareil_inconnu": "unknown Yeelight bulb",
+  "pilotes.yeelight.lecture_seule": "this point is read-only",
+  "pilotes.yeelight.valeur_invalide": "ON, OFF or TOGGLE expected",
+  "pilotes.yeelight.couleur_invalide": "#rrggbb colour expected",
+  "pilotes.yeelight.point.etat": "State",
+  "pilotes.yeelight.point.luminosite": "Brightness",
+  "pilotes.yeelight.point.temperature_couleur": "Colour temperature",
+  "pilotes.yeelight.point.couleur": "Colour",
+  "pilotes.yeelight.point.modele": "Model"
 }
