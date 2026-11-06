@@ -211,7 +211,17 @@ impl Bulb {
 
 /// `get_prop` probe: returns the `result` array, positionally aligned
 /// with the requested properties.
-const PROPS: [&str; 6] = ["power", "bright", "ct", "rgb", "name", "model"];
+const PROPS: [&str; 9] = [
+    "power",
+    "bright",
+    "ct",
+    "rgb",
+    "name",
+    "model",
+    "color_mode",
+    "hue",
+    "sat",
+];
 
 /// One request on a bulb: connect, send, read the answer line.
 async fn request(bulb: &Bulb, method: &str, params: Json) -> anyhow::Result<Json> {
@@ -248,8 +258,8 @@ fn apply_props(bulb: &mut Bulb, result: &Json, ctx: &DriverCtx) {
     if let Some(v) = get(2).as_str().and_then(|s| s.parse::<f64>().ok()) {
         ctx.set_state(&device, "color_temp", Value::Float(v));
     }
-    if let Some(rgb) = get(3).as_str().and_then(|s| s.parse::<u32>().ok()) {
-        ctx.set_state(&device, "color", Value::Text(format!("#{rgb:06x}").into()));
+    if let Some(color) = reported_color(&get) {
+        ctx.set_state(&device, "color", Value::Text(color.into()));
     }
     let name_value = get(4);
     let name = name_value.as_str().unwrap_or_default();
@@ -337,12 +347,12 @@ async fn on_command(bulbs: &mut [Bulb], ctx: &DriverCtx, command: CommandRequest
         }
         ("color_temp", Value::Int(v)) => {
             let v = (*v).clamp(1700, 6500);
-            command_bulb(bulb, "set_ct_abx", json!([v]), ctx).await
+            command_bulb(bulb, "set_ct_abx", json!([v, "sudden", 0]), ctx).await
         }
         ("color_temp", Value::Float(v)) => {
             #[allow(clippy::cast_possible_truncation)]
             let v = v.clamp(1700.0, 6500.0).round() as i64;
-            command_bulb(bulb, "set_ct_abx", json!([v]), ctx).await
+            command_bulb(bulb, "set_ct_abx", json!([v, "sudden", 0]), ctx).await
         }
         ("color", Value::Text(text)) => {
             let Some(rgb) = parse_hex(text) else {
@@ -360,6 +370,84 @@ async fn on_command(bulbs: &mut [Bulb], ctx: &DriverCtx, command: CommandRequest
         _ => Err(moli_i18n::tr!("pilotes.yeelight.lecture_seule")),
     };
     command.reply(result);
+}
+
+/// `"#rrggbb"` from the `get_prop` fields, honouring `color_mode`:
+/// `1` = packed RGB, `2` = colour temperature (the `rgb` prop is stale
+/// then), `3` = HSV. Anything else falls back to the packed `rgb`.
+fn reported_color(get: &dyn Fn(usize) -> Json) -> Option<String> {
+    let mode_value = get(6);
+    let mode = mode_value.as_str().unwrap_or_default();
+    let rgb = match mode {
+        "2" => kelvin_rgb(get(2).as_str()?.parse::<f64>().ok()?)?,
+        "3" => {
+            let h = get(7).as_str()?.parse::<f64>().ok()?;
+            let s = get(8).as_str()?.parse::<f64>().ok()? / 100.0;
+            // `bright` is a percentage; HSV value uses the same scale.
+            let v = get(1).as_str()?.parse::<f64>().ok()? / 100.0;
+            hsv_rgb(h, s, v)?
+        }
+        _ => get(3).as_str()?.parse::<u32>().ok()?,
+    };
+    Some(format!("#{rgb:06x}"))
+}
+
+/// Approximate sRGB of a blackbody temperature (Tanner Helland fit).
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names
+)]
+fn kelvin_rgb(ct: f64) -> Option<u32> {
+    if !(1000.0..=40_000.0).contains(&ct) {
+        return None;
+    }
+    let t = ct / 100.0;
+    let r = if t <= 66.0 {
+        255.0
+    } else {
+        329.698_73 * (t - 60.0).powf(-0.133_2)
+    };
+    let g = if t <= 66.0 {
+        99.470_8 * t.ln() - 161.119_6
+    } else {
+        288.122_2 * (t - 60.0).powf(-0.075_5)
+    };
+    let b = if t >= 66.0 {
+        255.0
+    } else if t <= 19.0 {
+        0.0
+    } else {
+        138.517_7 * (t - 10.0).ln() - 305.044_8
+    };
+    let channel = |c: f64| c.round().clamp(0.0, 255.0) as u32;
+    Some((channel(r) << 16) | (channel(g) << 8) | channel(b))
+}
+
+/// RGB packed integer from hue (0–360), saturation and value (0–1).
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names
+)]
+fn hsv_rgb(h: f64, s: f64, v: f64) -> Option<u32> {
+    if !(0.0..=1.0).contains(&s) || !(0.0..=1.0).contains(&v) {
+        return None;
+    }
+    let h = h.rem_euclid(360.0) / 60.0;
+    let c = v * s;
+    let x = c * (1.0 - (h % 2.0 - 1.0).abs());
+    let m = v - c;
+    let (r, g, b) = match h as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let channel = |f: f64| ((f + m) * 255.0).round().clamp(0.0, 255.0) as u32;
+    Some((channel(r) << 16) | (channel(g) << 8) | channel(b))
 }
 
 /// `"#rrggbb"` or `"rrggbb"` -> the packed RGB integer.
@@ -442,6 +530,58 @@ mod tests {
         assert_eq!(parse_hex("00ff00"), Some(0x0000_ff00));
         assert_eq!(parse_hex("#fff"), None);
         assert_eq!(parse_hex("red"), None);
+    }
+
+    #[test]
+    fn kelvin_colours_are_warm_or_cool() {
+        // 2700 K ≈ warm white, 6500 K ≈ daylight: red grows, blue shrinks.
+        let warm = kelvin_rgb(2700.0).unwrap();
+        let cool = kelvin_rgb(6500.0).unwrap();
+        // Warm white is redder, cool daylight is bluer.
+        assert!(warm & 0xff < cool & 0xff, "{warm:#x} vs {cool:#x}");
+        assert!(warm >> 16 >= cool >> 16, "{warm:#x} vs {cool:#x}");
+        assert!(kelvin_rgb(0.0).is_none());
+    }
+
+    #[test]
+    fn hsv_colours_match_primaries() {
+        assert_eq!(hsv_rgb(0.0, 1.0, 1.0), Some(0xff_0000));
+        assert_eq!(hsv_rgb(120.0, 1.0, 1.0), Some(0x00_ff00));
+        assert_eq!(hsv_rgb(240.0, 1.0, 1.0), Some(0x00_00_ff));
+        assert_eq!(hsv_rgb(0.0, 2.0, 1.0), None);
+    }
+
+    #[test]
+    fn colour_follows_the_reported_mode() {
+        let fields = |mode: &str, rgb: &str, ct: &str, hue: &str, sat: &str, bright: &str| {
+            let values = [
+                json!("on"),
+                json!(bright),
+                json!(ct),
+                json!(rgb),
+                json!(""),
+                json!(""),
+                json!(mode),
+                json!(hue),
+                json!(sat),
+            ];
+            let get = |i: usize| values.get(i).cloned().unwrap_or(Json::Null);
+            reported_color(&get)
+        };
+        // Colour mode: the packed rgb prop wins.
+        assert_eq!(
+            fields("1", "16711680", "4000", "0", "100", "50"),
+            Some("#ff0000".to_owned())
+        );
+        // Temperature mode: rgb is meaningless, kelvin wins.
+        let warm = fields("2", "255", "2700", "240", "100", "50").unwrap();
+        assert!(warm.starts_with('#'), "{warm}");
+        assert_ne!(warm, "#0000ff");
+        // HSV mode.
+        assert_eq!(
+            fields("3", "0", "4000", "120", "100", "100"),
+            Some("#00ff00".to_owned())
+        );
     }
 
     #[test]
