@@ -302,16 +302,34 @@ async fn command_bulb(
     params: Json,
     ctx: &DriverCtx,
 ) -> Result<(), String> {
-    request(bulb, method, params)
-        .await
-        .map_err(|e| format!("{e:#}"))?;
-    if let Ok(result) = request(bulb, "get_prop", json!(PROPS)).await {
-        apply_props(bulb, &result, ctx);
-        if bulb.refresh_device() {
-            ctx.upsert_device(bulb.device.clone());
+    command_bulb_forms(bulb, method, &[params], ctx).await
+}
+
+/// Same, trying each parameter shape in turn: firmwares disagree on
+/// whether `set_rgb`/`set_ct_abx` take the trailing `"sudden", duration`
+/// effect arguments (a rejected shape answers `-5000`).
+async fn command_bulb_forms(
+    bulb: &mut Bulb,
+    method: &str,
+    forms: &[Json],
+    ctx: &DriverCtx,
+) -> Result<(), String> {
+    let mut last = String::new();
+    for params in forms {
+        match request(bulb, method, params.clone()).await {
+            Ok(_) => {
+                if let Ok(result) = request(bulb, "get_prop", json!(PROPS)).await {
+                    apply_props(bulb, &result, ctx);
+                    if bulb.refresh_device() {
+                        ctx.upsert_device(bulb.device.clone());
+                    }
+                }
+                return Ok(());
+            }
+            Err(e) => last = format!("{e:#}"),
         }
     }
-    Ok(())
+    Err(last)
 }
 
 async fn on_command(bulbs: &mut [Bulb], ctx: &DriverCtx, command: CommandRequest) {
@@ -347,22 +365,52 @@ async fn on_command(bulbs: &mut [Bulb], ctx: &DriverCtx, command: CommandRequest
         }
         ("color_temp", Value::Int(v)) => {
             let v = (*v).clamp(1700, 6500);
-            command_bulb(bulb, "set_ct_abx", json!([v, "sudden", 0]), ctx).await
+            command_bulb_forms(
+                bulb,
+                "set_ct_abx",
+                &[
+                    json!([v, "sudden", 0]),
+                    json!([v.to_string(), "sudden", 0]),
+                    json!([v]),
+                ],
+                ctx,
+            )
+            .await
         }
         ("color_temp", Value::Float(v)) => {
             #[allow(clippy::cast_possible_truncation)]
             let v = v.clamp(1700.0, 6500.0).round() as i64;
-            command_bulb(bulb, "set_ct_abx", json!([v, "sudden", 0]), ctx).await
+            command_bulb_forms(
+                bulb,
+                "set_ct_abx",
+                &[
+                    json!([v, "sudden", 0]),
+                    json!([v.to_string(), "sudden", 0]),
+                    json!([v]),
+                ],
+                ctx,
+            )
+            .await
         }
         ("color", Value::Text(text)) => {
             let Some(rgb) = parse_hex(text) else {
                 command.reply(Err(moli_i18n::tr!("pilotes.yeelight.couleur_invalide")));
                 return;
             };
-            command_bulb(
+            let (r, g, b) = ((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff);
+            // Some firmwares take the packed integer, some the r,g,b
+            // channels as ints or strings, some with the trailing
+            // effect arguments: try each shape.
+            command_bulb_forms(
                 bulb,
                 "set_rgb",
-                json!([(rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff]),
+                &[
+                    json!([rgb, "sudden", 0]),
+                    json!([rgb]),
+                    json!([r.to_string(), g.to_string(), b.to_string()]),
+                    json!([r, g, b]),
+                    json!([r, g, b, "sudden", 0]),
+                ],
                 ctx,
             )
             .await
