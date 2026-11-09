@@ -29,6 +29,75 @@ fn tuya_instances(hub: &Hub) -> Vec<InstanceId> {
         .collect()
 }
 
+fn qobuz_instances(hub: &Hub) -> Vec<InstanceId> {
+    hub.snapshot()
+        .drivers
+        .iter()
+        .filter(|d| d.kind == "qobuz")
+        .map(|d| d.instance.clone())
+        .collect()
+}
+
+/// The music service's stream quality (Qobuz's `format_id`), read back and
+/// the formats it knows — `null`s when no music service runs.
+pub(crate) async fn qobuz(State(hub): State<Hub>) -> Response {
+    let music = hub.music();
+    Json(json!({
+        "format": music.as_ref().and_then(|m| m.format()),
+        "formats": music.as_ref().map_or(&[][..], |m| m.formats()),
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Quality {
+    format_id: u32,
+}
+
+/// The stream quality the house chose: applied to the running music
+/// service at once, filed in the store so the next start keeps it (the
+/// `qobuz` driver reads the `format_id` secret over `moli.toml`).
+pub(crate) async fn set_qobuz(
+    State(hub): State<Hub>,
+    Extension(humans): Extension<Arc<Sessions>>,
+    caller: Caller,
+    headers: HeaderMap,
+    Json(quality): Json<Quality>,
+) -> Response {
+    let refuse = |status: StatusCode, message: &str| {
+        (status, Json(json!({ "error": message }))).into_response()
+    };
+    if !humans.is_human(&headers, &caller.key) {
+        return refuse(
+            StatusCode::FORBIDDEN,
+            &moli_i18n::tr!("serveur.cle.qualite_humain"),
+        );
+    }
+    let Some(music) = hub.music() else {
+        return refuse(
+            StatusCode::NOT_FOUND,
+            &moli_i18n::tr!("serveur.pilote.absent", pilote = "qobuz"),
+        );
+    };
+    if !music.set_format(quality.format_id) {
+        return refuse(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &moli_i18n::tr!("serveur.cle.qualite_inconnue"),
+        );
+    }
+    let value = quality.format_id.to_string();
+    for instance in qobuz_instances(&hub) {
+        if let Err(e) = hub.store_secret(&instance, "format_id", &value).await {
+            return refuse(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+        }
+    }
+    tracing::info!(
+        format_id = quality.format_id,
+        "qobuz stream quality set from the dashboard"
+    );
+    Json(json!({ "stored": true, "format": quality.format_id })).into_response()
+}
+
 /// Whether each Tuya instance has cloud keys filed (never the keys).
 pub(crate) async fn tuya_cloud(State(hub): State<Hub>) -> Response {
     let instances: Vec<_> = tuya_instances(&hub)

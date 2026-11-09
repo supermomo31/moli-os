@@ -9,6 +9,8 @@
   "serveur.cle.tuya_humain": "seule une personne (code) donne des clés",
   "serveur.cle.tuya_pilote_inconnu": "pas de pilote tuya de ce nom",
   "serveur.cle.tuya_invalide": "ce ne sont pas des clés Tuya (lettres et chiffres : Access ID, puis Access Secret de 32 caractères)",
+  "serveur.cle.qualite_humain": "seule une personne (code) change la qualité d'écoute",
+  "serveur.cle.qualite_inconnue": "cette qualité n'existe pas pour ce service",
 
   "serveur.machine.jeton_refuse": "jeton refusé",
   "serveur.machine.foyer_seulement": "réservé au foyer",

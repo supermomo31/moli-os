@@ -25,4 +25,22 @@ pub struct Track {
 pub trait MusicService: Send + Sync + std::fmt::Debug {
     /// What `phrase` plays, first track first.
     fn resolve(&self, phrase: &str) -> BoxFuture<'_, Result<Vec<Track>, String>>;
+
+    /// The stream formats the service can resolve, as its own identifiers
+    /// (Qobuz's `format_id`), best last. Empty: not tunable.
+    fn formats(&self) -> &'static [u32] {
+        &[]
+    }
+
+    /// The stream format `resolve` currently uses, when tunable.
+    fn format(&self) -> Option<u32> {
+        None
+    }
+
+    /// Changes the stream format for the next `resolve`; `false` when the
+    /// service does not know it or does not let it be tuned.
+    fn set_format(&self, format: u32) -> bool {
+        let _ = format;
+        false
+    }
 }

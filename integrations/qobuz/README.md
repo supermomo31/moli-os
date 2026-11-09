@@ -17,12 +17,14 @@ qobuz-dl et streamrip. Elle peut changer ou cesser sans préavis.
 id = "qobuz"
 kind = "qobuz"
 [driver.options]
-format_id = 6   # 5 = MP3 320 kb/s, 6 = FLAC 16/44.1, 7/27 = hi-res 24-bit
+format_id = 6   # 5 = MP3 320 kb/s, 6 = FLAC 16/44.1, 7 = FLAC 24/96, 27 = FLAC 24/192
 queue = 12      # pistes mises en file par recherche
 ```
 
 Les identifiants (`app_id`, `app_secret`, `email`, `password`) vivent dans
-le coffre chiffré : voir `onboarding.md`.
+le coffre chiffré : voir `onboarding.md`. La qualité se règle aussi depuis
+le tableau de bord (**Système → Qualité Qobuz**, code demandé) : elle est
+enregistrée dans le coffre (`qobuz/format_id`) et l'emporte sur `moli.toml`.
 
 ## Ce que Moli voit
 

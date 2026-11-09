@@ -28,9 +28,9 @@ Measured on 2026-10-04, next to a real Home Assistant on the same machine
   driver is restarted with backoff, the core never goes down), journal of every write,
   last-known-state cache restored with its original age, encrypted secret store, a guard
   that holds agent commands in protected rooms for a human.
-- **32 integrations** (`integrations/`): Zigbee2MQTT (and Matter-over-MQTT bridges), Hue,
+- **46 integrations** (`integrations/`): Zigbee2MQTT (and Matter-over-MQTT bridges), Hue,
   Sonos, Google Cast, Amazon Echo (Alexa), Qobuz, ESPHome voice satellites, Tuya (local and
-  cloud), tado°, Somfy TaHoma (Overkiz), Netatmo cameras, Reolink, Frigate, Philips TV,
+  cloud), Tasmota, tado°, Somfy TaHoma (Overkiz), Netatmo cameras, Reolink, Frigate, Philips TV,
   Bambu Lab, Klipper / Moonraker, Tapo, IPP printers, UPnP routers, host & PCs, Wi-Fi
   presence, house helpers, Telegram, phones, plus declarative profiles (Daikin, Meross,
   Open-Meteo weather & air quality, Tempo, iopool) and energy import tools (`tools/enedis`

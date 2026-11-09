@@ -32,7 +32,7 @@ Il faut deux couples :
    kind = "qobuz"
 
    [driver.options]
-   format_id = 6   # 5 = MP3 320 kb/s, 6 = FLAC 16/44.1, 7/27 = hi-res 24-bit
+   format_id = 6   # 5 = MP3 320 kb/s, 6 = FLAC 16/44.1, 7 = FLAC 24/96, 27 = FLAC 24/192
    queue = 5       # pistes mises en file par recherche
    ```
 2. Enregistrer les 4 secrets dans le coffre chiffré (valeur par un tube,
@@ -46,6 +46,9 @@ Il faut deux couples :
 
 ## Limites
 
+- La qualité se change à chaud depuis **Système → Qualité Qobuz** (code
+  demandé) ; elle est gardée dans le coffre (`qobuz/format_id`) et prime
+  sur `format_id` de `moli.toml`.
 - La qualité `format_id` est plafonnée par l'abonnement (une piste non
   éligible est simplement ignorée dans la file).
 - `app_secret` peut changer quand Qobuz met à jour son player : le remettre

@@ -1,0 +1,34 @@
+[integration]
+id = "tasmota"
+name = "Tasmota (Sonoff…)"
+brands = ["Sonoff", "Tasmota"]
+models = []
+transport = "mqtt"
+driver = "tasmota"
+crate = "moli-tasmota"
+
+[discovery]
+# No discovery yet: every device publishing under `tele/` and `stat/` on
+# the broker becomes a Moli device (its retained `stat/<host>/LWT`).
+mdns = []
+ssdp = []
+# The MQTT broker.
+ports = [1883]
+
+[needs]
+# A broker password, if any, comes from the environment variable named by
+# `password_env`: never from the store, never in moli.toml.
+secrets = []
+vars = []
+options = ["host", "port", "username", "password_env", "client_id", "devices"]
+
+[origin]
+reused = "protocole MQTT de Tasmota (tele/STATE, tele/SENSOR, stat/LWT, cmnd/…)"
+author = "agent"
+
+# Replayed by the crate's tests (crates/moli-tasmota/src/lib.rs).
+[[fixture]]
+file = "fixtures/4chpro-state.json"
+
+[[fixture]]
+file = "fixtures/4chpro-sensor.json"

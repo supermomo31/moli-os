@@ -18,7 +18,7 @@ Mesures sur une installation réelle, à côté de son Home Assistant (détail d
 | Échelle | 77 appareils (22 pilotes) | 171 appareils (1 591 entités) |
 
 Ce qui marche aujourd'hui :
-- 32 intégrations : Zigbee (Zigbee2MQTT et ponts Matter vers MQTT), Hue, Tuya (local et cloud),
+- 46 intégrations : Zigbee (Zigbee2MQTT et ponts Matter vers MQTT), Tasmota, Hue, Tuya (local et cloud),
   Reolink, caméras Netatmo, Sonos (et ses annonces vocales), Google Cast, Amazon Echo (Alexa),
   Qobuz, satellites vocaux ESPHome, tado°, Somfy TaHoma (Overkiz), télé Philips, Frigate, Bambu
   (et son AMS), Klipper / Moonraker, Tapo, box UPnP, imprimante IPP, l'hôte et les ordinateurs,

@@ -62,6 +62,9 @@ moli-qobuz = { path = "crates/moli-qobuz" }
 moli-lms = { path = "crates/moli-lms" }
 moli-tado = { path = "crates/moli-tado" }
 moli-netatmo = { path = "crates/moli-netatmo" }
+moli-tasmota = { path = "crates/moli-tasmota" }
+moli-yeelight = { path = "crates/moli-yeelight" }
+moli-shelly1 = { path = "crates/moli-shelly1" }
 moli-tahoma = { path = "crates/moli-tahoma" }
 moli-demo = { path = "crates/moli-demo" }
 moli-weather = { path = "crates/moli-weather" }

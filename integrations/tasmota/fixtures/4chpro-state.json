@@ -1,0 +1,21 @@
+{
+  "Time": "2026-11-06T08:00:00",
+  "Uptime": "3d04:12:33",
+  "Heap": 21,
+  "SleepMode": "Dynamic",
+  "BtnLock": "1",
+  "POWER1": "ON",
+  "POWER2": "OFF",
+  "POWER3": "ON",
+  "POWER4": "OFF",
+  "Wifi": {
+    "AP": 1,
+    "SSId": "Box",
+    "BSSId": "aa:bb:cc:dd:ee:ff",
+    "Channel": 11,
+    "Mode": "11n",
+    "RSSI": -58,
+    "LinkCount": 1,
+    "Downtime": 0
+  }
+}

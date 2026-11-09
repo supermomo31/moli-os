@@ -196,6 +196,10 @@ fn house_routes(humans: &Arc<session::Sessions>, options: &Options) -> Router<Hu
             "/api/integrations/tuya-cloud",
             get(integrations::tuya_cloud).put(integrations::set_tuya_cloud),
         )
+        .route(
+            "/api/integrations/qobuz",
+            get(integrations::qobuz).put(integrations::set_qobuz),
+        )
         .route("/api/session/pin", put(rest::set_pin))
         .route(
             "/api/people",

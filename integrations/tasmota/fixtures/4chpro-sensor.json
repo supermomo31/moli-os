@@ -1,0 +1,48 @@
+{
+  "Time": "2026-11-06T08:00:00",
+  "POWER1": {
+    "Power": 12.4,
+    "Energy": 0.421,
+    "ApparentPower": 13.1,
+    "ReactivePower": 4.0,
+    "Factor": 0.95,
+    "Voltage": 230.2,
+    "Current": 0.057
+  },
+  "POWER2": {
+    "Power": 0.0,
+    "Energy": 1.873,
+    "ApparentPower": 0.0,
+    "ReactivePower": 0.0,
+    "Factor": 0.0,
+    "Voltage": 230.1,
+    "Current": 0.0
+  },
+  "POWER3": {
+    "Power": 87.6,
+    "Energy": 14.205,
+    "ApparentPower": 91.2,
+    "ReactivePower": 25.0,
+    "Factor": 0.96,
+    "Voltage": 229.8,
+    "Current": 0.397
+  },
+  "POWER4": {
+    "Power": 0.0,
+    "Energy": 0.008,
+    "ApparentPower": 0.0,
+    "ReactivePower": 0.0,
+    "Factor": 0.0,
+    "Voltage": 230.0,
+    "Current": 0.0
+  },
+  "TempUnit": "C",
+  "SHT3X-0x44": {
+    "Temperature": 21.4,
+    "Humidity": 44.8,
+    "DewPoint": 8.9
+  },
+  "Wifi": {
+    "RSSI": -58
+  }
+}

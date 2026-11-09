@@ -12,6 +12,7 @@
 //! the `user_auth_token`, kept in memory only).
 
 use std::fmt::Write as _;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -37,6 +38,12 @@ const APP_SECRET: &str = "app_secret";
 const EMAIL: &str = "email";
 const PASSWORD: &str = "password";
 const TOKEN: &str = "user_auth_token";
+/// The stream format chosen from the dashboard, filed in the store: it
+/// wins over `format_id` of `moli.toml` (same values, not a secret).
+const FORMAT: &str = "format_id";
+
+/// Qobuz's `format_id`s, lowest to highest quality.
+const FORMATS: [u32; 4] = [5, 6, 7, 27];
 
 fn default_format() -> u32 {
     6
@@ -50,7 +57,9 @@ fn default_queue() -> usize {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Stream quality, Qobuz's `format_id`: `5` MP3 320 kb/s, `6` FLAC
-    /// 16-bit 44.1 kHz (CD, the default), `7`/`27` hi-res 24-bit.
+    /// 16-bit 44.1 kHz (CD, the default), `7` FLAC 24-bit/96 kHz, `27`
+    /// FLAC 24-bit/192 kHz. The dashboard's choice (the `format_id` secret)
+    /// wins over this.
     #[serde(default = "default_format")]
     pub format_id: u32,
     /// How many tracks a `play` queues at most.
@@ -140,12 +149,17 @@ async fn run(config: &Config, ctx: &mut DriverCtx) -> anyhow::Result<()> {
         ctx.cancelled().await;
         return Ok(());
     }
+    let format_id = ctx
+        .secret(FORMAT)
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|f| FORMATS.contains(f))
+        .unwrap_or(config.format_id);
     let client = Client {
         app_id: ctx.secret(APP_ID).unwrap_or_default(),
         secret: ctx.secret(APP_SECRET).unwrap_or_default(),
         email: ctx.secret(EMAIL).unwrap_or_default(),
         password: ctx.secret(PASSWORD).unwrap_or_default(),
-        format_id: config.format_id,
+        format_id: AtomicU32::new(format_id),
         queue: config.queue,
         token: Mutex::new(ctx.secret(TOKEN).filter(|t| !t.trim().is_empty())),
     };
@@ -201,7 +215,7 @@ struct Client {
     secret: String,
     email: String,
     password: String,
-    format_id: u32,
+    format_id: AtomicU32,
     queue: usize,
     token: Mutex<Option<String>>,
 }
@@ -365,13 +379,13 @@ impl Client {
 
     async fn stream_url_once(&self, track_id: u64) -> anyhow::Result<(String, String)> {
         let ts = moli_core::now_ms() / 1000;
+        let format_id = self.format_id.load(Ordering::Relaxed);
         let sig = md5(&format!(
-            "trackgetFileUrlformat_id{}intentstreamtrack_id{track_id}{ts}{}",
-            self.format_id, self.secret
+            "trackgetFileUrlformat_id{format_id}intentstreamtrack_id{track_id}{ts}{}",
+            self.secret
         ));
         let path = format!(
-            "track/getFileUrl?track_id={track_id}&format_id={}&intent=stream&request_ts={ts}&request_sig={sig}",
-            self.format_id
+            "track/getFileUrl?track_id={track_id}&format_id={format_id}&intent=stream&request_ts={ts}&request_sig={sig}"
         );
         let (status, body) = self.call(&path, true).await?;
         let url = body["url"].as_str().unwrap_or_default();
@@ -391,6 +405,23 @@ impl MusicService for Client {
     fn resolve(&self, phrase: &str) -> BoxFuture<'_, Result<Vec<Track>, String>> {
         let phrase = phrase.to_owned();
         Box::pin(async move { self.tracks(&phrase).await.map_err(|e| format!("{e:#}")) })
+    }
+
+    fn formats(&self) -> &'static [u32] {
+        &FORMATS
+    }
+
+    fn format(&self) -> Option<u32> {
+        Some(self.format_id.load(Ordering::Relaxed))
+    }
+
+    fn set_format(&self, format: u32) -> bool {
+        if FORMATS.contains(&format) {
+            self.format_id.store(format, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
     }
 }
 

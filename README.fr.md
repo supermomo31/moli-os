@@ -29,9 +29,9 @@ historique : [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)) :
   écriture, le dernier état connu restauré avec son âge, un coffre chiffré pour les secrets, et
   une garde qui retient les ordres des agents dans les pièces protégées pour qu'une personne
   les valide.
-- **32 intégrations** (`integrations/`) : Zigbee2MQTT (et ponts Matter vers MQTT), Hue,
+- **46 intégrations** (`integrations/`) : Zigbee2MQTT (et ponts Matter vers MQTT), Hue,
   Sonos, Google Cast, Amazon Echo (Alexa), Qobuz, satellites vocaux ESPHome, Tuya (local et
-  cloud), tado°, Somfy TaHoma (Overkiz), caméras Netatmo, Reolink, Frigate, télés Philips,
+  cloud), Tasmota, tado°, Somfy TaHoma (Overkiz), caméras Netatmo, Reolink, Frigate, télés Philips,
   Bambu Lab, Klipper / Moonraker, Tapo, imprimantes IPP, box UPnP, hôte et ordinateurs,
   présence Wi-Fi, aides de la maison, Telegram, téléphones, ainsi que des profils déclaratifs
   (Daikin, Meross, météo et qualité de l'air Open-Meteo, Tempo, iopool) et les outils d'import

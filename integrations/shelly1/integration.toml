@@ -1,0 +1,26 @@
+[integration]
+id = "shelly1"
+name = "Shelly Gen1 (SHSW-1, SHSW-25, PM)"
+brands = ["Shelly"]
+models = ["SHSW-1", "SHSW-25", "SHSW-PM", "SHSW-01PM"]
+transport = "http"
+driver = "shelly1"
+crate = "moli-shelly1"
+
+[discovery]
+# No discovery yet: the instance gives the device's address. Shelly Gen1
+# devices announce as _http._tcp on the LAN for the day Moli discovers.
+mdns = []
+ssdp = []
+ports = [80]
+
+[needs]
+# Gen1 devices without a password need nothing; authentication is not
+# wired yet.
+secrets = []
+vars = []
+options = ["devices", "port", "poll_secs"]
+
+[origin]
+reused = "API HTTP Gen1 publique (GET /status, /shelly, /settings, /relay/<n>?turn=)"
+author = "agent"

@@ -1,0 +1,23 @@
+[package]
+name = "moli-shelly1"
+description = "Moli OS driver for Shelly Gen1 devices (SHSW-1, SHSW-25, PM variants) over their HTTP API."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+moli-core.workspace = true
+moli-runtime.workspace = true
+moli-i18n.workspace = true
+moli-net.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+tracing.workspace = true
+
+[lints]
+workspace = true

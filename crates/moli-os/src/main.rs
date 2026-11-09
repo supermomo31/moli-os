@@ -981,6 +981,8 @@ const KINDS: &[&str] = &[
     "alexa",
     "tado",
     "netatmo",
+    "tasmota",
+    "yeelight",
     "tahoma",
     "sonos",
     "qobuz",
@@ -996,6 +998,7 @@ const KINDS: &[&str] = &[
     "ipp",
     "host",
     "profile",
+    "shelly1",
     "demo",
 ];
 
@@ -1190,6 +1193,15 @@ fn build_driver(
             config.options.clone().try_into().with_context(context)?,
         )),
         "netatmo" => Arc::new(moli_netatmo::Netatmo::new(
+            config.options.clone().try_into().with_context(context)?,
+        )),
+        "tasmota" => Arc::new(moli_tasmota::Tasmota::new(
+            config.options.clone().try_into().with_context(context)?,
+        )),
+        "yeelight" => Arc::new(moli_yeelight::Yeelight::new(
+            config.options.clone().try_into().with_context(context)?,
+        )),
+        "shelly1" => Arc::new(moli_shelly1::Shelly1::new(
             config.options.clone().try_into().with_context(context)?,
         )),
         "tahoma" => Arc::new(moli_tahoma::Tahoma::new(
